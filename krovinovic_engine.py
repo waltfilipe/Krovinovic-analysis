@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import math
 
 import pandas as pd
 
@@ -130,13 +131,33 @@ def build_target_xp_profile(xp_passes: pd.DataFrame) -> dict | None:
     }
 
 
+def _sanitize_numeric_profile(profile: dict) -> dict:
+    """Replace non-finite metric values so single-player pools never break ranking."""
+    clean = dict(profile)
+    for key, value in clean.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            clean[key] = 0.0
+    return clean
+
+
+def _copy_origin_fields(target: dict, source: dict) -> None:
+    for key in (
+        "position_group",
+        "midfield_offensive_origin_pct",
+        "midfield_origin_profile",
+        "league",
+        "league_source",
+    ):
+        if source.get(key) is not None:
+            target[key] = source[key]
+
+
 def _merge_xp_profiles(european_profiles: list[dict], target_profile: dict) -> dict[str, dict]:
     merged = [p for p in european_profiles if str(p.get("player_id")) != TARGET_PLAYER_ID]
-    merged.append(target_profile)
+    merged.append(_sanitize_numeric_profile(target_profile))
     merged.sort(key=lambda p: float(p.get("xp_m4_total", 0.0)), reverse=True)
     for i, profile in enumerate(merged, start=1):
         profile["xp_m4_rank"] = i
-    xe.refresh_xp_midfield_origin_rankings(merged)
     return {str(p["player_id"]): p for p in merged}
 
 
@@ -184,6 +205,12 @@ def inject_target_into_bundle(
         passes_by_player,
         empty_carries,
     )
+    target_player = next(
+        p for p in combined_players if str(p.get("player_id")) == TARGET_PLAYER_ID
+    )
+    _copy_origin_fields(target_xp_profile, target_player)
+    target_xp_profile = _sanitize_numeric_profile(target_xp_profile)
+
     _, pass_by_id, pool_by_position = compute_pass_ratings(combined_players)
     _, progression_by_id, progression_pool_by_position = pg_compute_progression_ratings(
         combined_players,
@@ -213,11 +240,7 @@ def inject_target_into_bundle(
         xp_profile["age"] = pp.read_cached_age(pid)
         origin = origin_by_id.get(pid)
         if origin:
-            xp_profile.setdefault("league", origin.get("league"))
-            xp_profile.setdefault("league_source", origin.get("league_source"))
-            xp_profile["position_group"] = origin.get("position_group") or xp_profile.get("position_group")
-            xp_profile["midfield_offensive_origin_pct"] = origin.get("midfield_offensive_origin_pct")
-            xp_profile["midfield_origin_profile"] = origin.get("midfield_origin_profile")
+            _copy_origin_fields(xp_profile, origin)
     xe.refresh_xp_midfield_origin_rankings(list(xp_by_id.values()))
 
     for prof in progression_by_id.values():
