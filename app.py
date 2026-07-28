@@ -1,1 +1,11771 @@
+"""Filip Krovinović — xP analysis against European midfielder benchmarks."""
 
+from __future__ import annotations
+
+import html
+import inspect
+import sys
+import unicodedata
+from pathlib import Path
+
+_APP_ROOT = Path(__file__).resolve().parent
+for _path in (_APP_ROOT, _APP_ROOT / "scripts"):
+    _entry = str(_path)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
+
+
+def _load_similarity_engine():
+    """Load local similarity_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "similarity_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    spec = importlib.util.spec_from_file_location("passes_xt_similarity_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["passes_xt_similarity_engine"] = module
+    return module
+
+
+def _load_progression_engine():
+    """Load local progression_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "progression_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    spec = importlib.util.spec_from_file_location("passes_xt_progression_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["passes_xt_progression_engine"] = module
+    return module
+
+
+def _load_xp_engine():
+    """Load local xp_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "xp_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    spec = importlib.util.spec_from_file_location("passes_xt_xp_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["passes_xt_xp_engine"] = module
+    sys.modules["xp_engine"] = module
+    return module
+
+
+def _load_xp_study_engine():
+    """Load local xp_study_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "xp_study_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    spec = importlib.util.spec_from_file_location("passes_xt_xp_study_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["passes_xt_xp_study_engine"] = module
+    sys.modules["xp_study_engine"] = module
+    return module
+
+
+def _load_xp_stats_engine():
+    """Load local xp_stats_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "xp_stats_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    module_name = "passes_xt_xp_stats_engine"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[module_name] = module
+    sys.modules["xp_stats_engine"] = module
+    return module
+
+
+def _load_xp_study_maps():
+    """Load local xp_study_maps.py explicitly (avoids stale/shadowed module on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "xp_study_maps.py"
+    if not module_path.is_file():
+        raise ImportError(f"File not found: {module_path}")
+    module_name = "passes_xt_xp_study_maps"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[module_name] = module
+    sys.modules["xp_study_maps"] = module
+    return module
+
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
+
+import passes_engine as pe
+import krovinovic_engine as ke
+from krovinovic_config import APP_LEAGUE, APP_NAME, TARGET_PLAYER_ID, TARGET_PLAYER_NAME
+from heuristic_scoring import GROUP_COLORS, position_group_label, rating_position_group
+sim = _load_similarity_engine()
+from comparison_config import (
+    CLASSIFICATION_MODEL_DEFAULT,
+    TIER_MODEL_DEFAULT,
+    XT_SURFACE_MODE_DEFAULT,
+    normalize_classification_model,
+    normalize_tier_model,
+    normalize_xt_surface_mode,
+)
+from passes_maps import (
+    draw_all_completed_passes_map,
+    draw_action_origin_heatmap,
+    draw_action_origin_smooth_heatmap,
+    draw_impact_pass_map,
+    draw_pass_destination_heatmap,
+    draw_pass_origin_heatmap,
+)
+import carries_engine as ce
+import midfield_origin as mo
+import player_profiles as pp
+from carries_maps import (
+    draw_all_carries_map,
+    draw_dribble_map,
+    draw_impact_pass_map as draw_carry_impact_map,
+    draw_pass_destination_heatmap as draw_carry_threat_heatmap,
+)
+pge = _load_progression_engine()
+from progression_maps import (
+    draw_all_actions_heatmap,
+    draw_all_actions_map,
+    draw_threat_actions_heatmap,
+    draw_threat_actions_map,
+)
+xpe = _load_xp_study_engine()
+xe = _load_xp_engine()
+xstats = _load_xp_stats_engine()
+IMPACT_PASS_ABBR = getattr(xstats, "IMPACT_PASS_ABBR", "I.P.")
+XP_ROUND_SERIES_KEY = getattr(xstats, "XP_ROUND_SERIES_KEY", "xp_round_series")
+XP_PROFILE_BAR_KEYS_RENDER: tuple[str, ...] = (
+    "xp_activity_display",
+    "xp_edge_display",
+)
+XP_PROFILE_BAR_ICONS: dict[str, str] = getattr(
+    xstats,
+    "XP_PROFILE_BAR_ICONS",
+    {
+        "xp_activity_display": "fa-chart-simple",
+        "xp_edge_display": "fa-bolt",
+        "xp_consistency_display": "fa-wave-square",
+    },
+)
+XP_PROFILE_BAR_WEIGHTS: dict[str, float] = getattr(
+    xstats,
+    "XP_PROFILE_BAR_WEIGHTS",
+    {
+        "xp_activity_display": 0.50,
+        "xp_edge_display": 0.50,
+    },
+)
+_xp_study_maps = _load_xp_study_maps()
+_CMAP_XP_GRAY_RED = _xp_study_maps.CMAP_XP_GRAY_RED
+draw_passes_destination_heatmap = _xp_study_maps.draw_passes_destination_heatmap
+draw_special_passes_season_map = _xp_study_maps.draw_special_passes_season_map
+draw_top_xp_passes_map = _xp_study_maps.draw_top_xp_passes_map
+draw_top_residual_passes_map = _xp_study_maps.draw_top_residual_passes_map
+draw_xp_destination_surface = _xp_study_maps.draw_xp_destination_surface
+draw_midfielder_common_passes_map = _xp_study_maps.draw_midfielder_common_passes_map
+draw_midfielder_rare_passes_map = _xp_study_maps.draw_midfielder_rare_passes_map
+
+XP_DATA_CACHE_VERSION = xe.XP_DATA_CACHE_VERSION
+
+DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
+LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
+DISTANCE_METRIC_KEYS = pe.DISTANCE_METRIC_KEYS
+RISK_PASS_METRIC_KEYS = pe.RISK_PASS_METRIC_KEYS
+ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
+SCOUT_SECTION_SPECS = pe.SCOUT_SECTION_SPECS
+POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
+RATING_TOP_N = pe.RATING_TOP_N
+RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
+RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
+RATING_ELIGIBILITY_PERCENTILE = getattr(pe, "RATING_ELIGIBILITY_PERCENTILE", 75)
+SIMILARITY_TOP_K = 10
+PLAYER_ANALYSIS_SELECT_KEY = "player_analysis_select"
+PLAYER_ANALYSIS_SHOW_MAPS_KEY = "pa_show_maps"
+PLAYER_ANALYSIS_SHOW_SIMILAR_KEY = "pa_show_similar"
+PLAYER_ANALYSIS_SIMILAR_PICK_KEY = "pa_similar_pick"
+PLAYER_ANALYSIS_COMPARE_KEY = "pa_compare_select"
+PLAYER_ANALYSIS_POSITION_BLOCKS_KEY = "pa_position_blocks"
+STATS_POSITION_BLOCKS_KEY = "stats_position_blocks"
+PA_FILTER_LEAGUE_KEY = "pa_filter_league"
+PA_FILTER_FIELD_KEY = "pa_filter_field"
+PA_FILTER_AGE_KEY = "pa_filter_age"
+PA_FILTER_PLAYER_KEY = "pa_filter_player"
+PA_VIEW_SELECT_KEY = "pa_view_select"
+PA_VIEW_SCATTER = "scatter"
+PA_VIEW_MAPS = "maps"
+PA_VIEW_LABELS: dict[str, str] = {
+    PA_VIEW_SCATTER: "Scatter",
+    PA_VIEW_MAPS: "Mapas de passe",
+}
+PA_LEAGUE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("all", "Todas as ligas"),
+    ("premier_league", "Premier League"),
+    ("italia_seriea", "Serie A"),
+    ("laliga", "La Liga"),
+    ("bundesliga", "Bundesliga"),
+    ("ligue1", "Ligue 1"),
+)
+PA_FIELD_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("all", "Todos os campos"),
+    ("offensive", "Campo ofensivo"),
+    ("defensive", "Campo defensivo"),
+)
+PA_AGE_OPTIONS: tuple[tuple[str, int | None, int | None], ...] = (
+    ("all", None, None),
+    ("over30", 31, None),
+    ("23_30", 23, 30),
+    ("u23", None, 23),
+    ("u21", None, 21),
+)
+PA_AGE_LABELS: dict[str, str] = {
+    "all": "Todas as idades",
+    "over30": ">30 anos",
+    "23_30": "23-30 anos",
+    "u23": "Sub-23",
+    "u21": "Sub-21",
+}
+XP_CELL_MAP_HEIGHT = 1320
+INTERACTIVE_CELL_MAP_CACHE_VERSION = 5
+PA_URL_PLAYER_KEY = "_pa_url_player_id"
+PA_USER_PLAYER_PICK_KEY = "_pa_user_player_pick"
+PA_USER_POSITION_PICK_KEY = "_pa_user_position_pick"
+MAPS_SHORT_PASS_ONLY_KEY = "maps_short_pass_only"
+MAPS_XP_THREAT_ONLY_KEY = "maps_xp_threat_only"
+MAPS_VIEW_TYPE_KEY = "maps_view_type"
+MAPS_THREAT_BAND_KEY = "maps_threat_band"
+MAPS_SPECIAL_PASS_KEY = "maps_special_pass_filter"
+MAPS_PASS_SELECT_KEY = "maps_pass_select"
+MAPS_POSITION_BLOCKS_KEY = "maps_position_blocks"
+MAPS_STAT_TYPE_KEY = "maps_stat_type"
+MAPS_STAT_TYPE_PREV_KEY = "maps_stat_type_prev"
+SCATTER_X_METRIC_KEY = "scatter_x_metric"
+SCATTER_Y_METRIC_KEY = "scatter_y_metric"
+SCATTER_X_BAND_KEY = "scatter_x_band"
+SCATTER_Y_BAND_KEY = "scatter_y_band"
+SCATTER_STAT_TYPE_KEY = "scatter_stat_type"
+SCATTER_STAT_TYPE_PREV_KEY = "scatter_stat_type_prev"
+SCATTER_POSITION_BLOCKS_KEY = "scatter_position_blocks"
+SCATTER_HIGHLIGHT_PLAYER_KEY = "scatter_highlight_player"
+ESTUDO_PLAYER_SELECT_KEY = "estudo_player_select"
+PLAYER_ANALYSIS_POSITION_BLOCKS: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = (
+    ("cm", "Central Midfielders", None, "central_midfielders"),
+    ("am", "Attacking Midfielders", None, "attacking_midfielders"),
+)
+SCATTER_POSITION_BLOCKS: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = (
+    ("cm", "Central Midfielders", None, "central_midfielders"),
+    ("am", "Attacking Midfielders", None, "attacking_midfielders"),
+)
+PLAYER_POSITION_BLOCK_BY_ID: dict[str, tuple[str, frozenset[str] | None, str | None]] = {
+    block_id: (label, codes, rating_group)
+    for block_id, label, codes, rating_group in PLAYER_ANALYSIS_POSITION_BLOCKS
+}
+SCATTER_POSITION_BLOCK_BY_ID: dict[str, tuple[str, frozenset[str] | None, str | None]] = {
+    block_id: (label, codes, rating_group)
+    for block_id, label, codes, rating_group in SCATTER_POSITION_BLOCKS
+}
+_RATING_GROUP_BLOCK_IDS: dict[str, frozenset[str]] = {
+    "centerbacks": frozenset({"cb"}),
+    "fullbacks": frozenset({"fb"}),
+    "central_midfielders": frozenset({"cm"}),
+    "attacking_midfielders": frozenset({"am"}),
+    "wingers": frozenset({"wg"}),
+    "strikers": frozenset({"st"}),
+}
+_LEGACY_POSITION_BLOCK_IDS: dict[str, str] = {
+    "rb": "fb",
+    "lb": "fb",
+    "rw": "wg",
+    "lw": "wg",
+}
+FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
+FIXED_TIER_MODEL = TIER_MODEL_DEFAULT
+FIXED_XT_SURFACE_MODE = XT_SURFACE_MODE_DEFAULT
+build_analytics = pe.build_analytics
+compute_pass_ratings = pe.compute_pass_ratings
+fmt_pct = pe.fmt_pct
+fmt_stat_value = pe.fmt_stat_value
+load_passes_grouped = pe.load_passes_grouped
+metric_label = pe.metric_label
+analyst_metric_label = pe.analyst_metric_label
+metric_tooltip = pe.metric_tooltip
+rank_in_group_label = pe.rank_in_group_label
+rank_to_display_score = pe.rank_to_display_score
+score_display_color = pe.score_display_color
+rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
+enrich_player_eligibility = pe.enrich_player_eligibility
+RATING_CONFIDENCE_MINUTES = getattr(pe, "RATING_CONFIDENCE_MINUTES", 900.0)
+RATING_CONFIDENCE_PASSES = getattr(pe, "RATING_CONFIDENCE_PASSES", 400.0)
+RATING_LOW_SAMPLE_THRESHOLD = getattr(pe, "RATING_LOW_SAMPLE_THRESHOLD", 0.85)
+
+CARRIES_DATA_CACHE_VERSION = ce.DATA_CACHE_VERSION
+CARRIES_SCOUT_SECTION_SPECS = ce.SCOUT_SECTION_SPECS
+ce_build_analytics = ce.build_analytics
+ce_compute_pass_ratings = ce.compute_pass_ratings
+ce_load_carries_grouped = ce.load_passes_grouped
+ce_load_dribbles_grouped = ce.load_dribbles_grouped
+ce_rate_player_vs_eligible_pool = ce.rate_player_vs_eligible_pool
+ce_analyst_metric_label = ce.analyst_metric_label
+ce_metric_tooltip = ce.metric_tooltip
+ce_rank_in_group_label = ce.rank_in_group_label
+ce_fmt_pct = ce.fmt_pct
+ce_fmt_stat_value = ce.fmt_stat_value
+CARRIES_RATING_CONFIDENCE_MINUTES = getattr(ce, "RATING_CONFIDENCE_MINUTES", 900.0)
+CARRIES_RATING_CONFIDENCE_PASSES = getattr(ce, "RATING_CONFIDENCE_PASSES", 400.0)
+CARRIES_PARTICIPATION_KEYS: tuple[str, ...] = (
+    "minutes",
+    "carries_total",
+    "minutes_pct",
+    "impact_passes",
+    "high_impact_passes",
+    "dribbles_total",
+    "dribble_success_pct",
+)
+
+PROGRESSION_DATA_CACHE_VERSION = pge.DATA_CACHE_VERSION
+PROGRESSION_SCOUT_SECTION_SPECS = pge.PROGRESSION_SCOUT_SECTION_SPECS
+PROGRESSION_RADAR_METRIC_KEYS = pge.PROGRESSION_RADAR_METRIC_KEYS
+PROGRESSION_PARTICIPATION_KEYS = pge.PROGRESSION_PARTICIPATION_KEYS
+TRADITIONAL_PARTICIPATION_KEYS = getattr(
+    pge,
+    "TRADITIONAL_PARTICIPATION_KEYS",
+    (
+        "passes_total",
+        "long_balls",
+        "progressive_passes",
+        "final_third_passes",
+        "passes_to_box",
+        "carry_progressive_carries",
+        "very_progressive_carries",
+        "dribbles_success",
+        "dribbles_final_third",
+        "key_passes",
+        "crosses_total",
+    ),
+)
+pg_compute_progression_ratings = pge.compute_progression_ratings
+pg_build_progression_dashboard_player = pge.build_progression_dashboard_player
+pg_attach_participation_ranks_to_player = pge.attach_participation_ranks_to_player
+pg_enrich_traditional_participation_fields = pge.enrich_traditional_participation_fields
+pg_analyst_metric_label = pge.analyst_metric_label
+pg_metric_tooltip = pge.metric_tooltip
+pg_rank_in_group_label = pge.rank_in_group_label
+pg_fmt_pct = pge.fmt_pct
+pg_fmt_stat_value = pge.fmt_stat_value
+
+
+
+def fmt_rating_score(pass_rating) -> str:
+    if pass_rating is None:
+        return "—"
+    return f"{float(pass_rating) * 10.0:.1f}"
+
+def _rating_confidence_value(
+    player: dict,
+    *,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+) -> float:
+    conf = player.get("rating_confidence")
+    if conf is not None:
+        return float(conf)
+    minutes = float(player.get("minutes") or 0)
+    passes = float(player.get("passes_completed") or 0)
+    pass_ref = max(float(player.get("position_p25_passes") or confidence_passes), 1.0)
+    conf_minutes = min(1.0, minutes / confidence_minutes)
+    conf_passes = min(1.0, passes / pass_ref)
+    return (conf_minutes + conf_passes) / 2.0
+
+
+def _rating_confidence_for_key(player: dict, rating_key: str = "pass_rating") -> float:
+    confidence_keys = {
+        "pass_rating": "pass_rating_confidence",
+        "carry_rating": "carry_rating_confidence",
+        "progression_rating": "rating_confidence",
+        "xp_pass_rating": "xp_pass_rating_confidence",
+    }
+    conf = player.get(confidence_keys.get(rating_key, "rating_confidence"))
+    if conf is not None:
+        return float(conf)
+    fallback = player.get("rating_confidence")
+    if fallback is not None:
+        return float(fallback)
+    return _rating_confidence_value(player)
+
+
+def _is_low_sample_rating(
+    player: dict,
+    *,
+    rating_key: str = "pass_rating",
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+) -> bool:
+    if rating_key == "progression_rating":
+        pass_conf = _rating_confidence_for_key(player, "pass_rating")
+        carry_conf = _rating_confidence_for_key(player, "carry_rating")
+        combined_confidence = (pass_conf + carry_conf) / 2.0
+        return combined_confidence < RATING_LOW_SAMPLE_THRESHOLD
+    return _rating_confidence_for_key(player, rating_key) < RATING_LOW_SAMPLE_THRESHOLD
+
+
+def _low_sample_tooltip(player: dict) -> str:
+    return "Small sample in position group."
+
+
+def _rating_sample_warning_html(
+    player: dict,
+    *,
+    soft: bool = False,
+    rating_key: str = "pass_rating",
+) -> str:
+    if not _is_low_sample_rating(player, rating_key=rating_key):
+        return ""
+    tip = html.escape(_low_sample_tooltip(player))
+    if soft:
+        icon = '<span class="rating-warning rating-warning-soft">⚠</span>'
+    else:
+        icon = '<span class="rating-warning">⚠</span>'
+    return (
+        '<span class="rating-warning-tip rating-sample-tip">'
+        f"{icon}"
+        f'<span class="rating-sample-tipbox">{tip}</span>'
+        "</span>"
+    )
+
+
+def _rating_score_value_html(player: dict, *, rating_key: str = "pass_rating") -> str:
+    rating_val = player.get(rating_key)
+    if rating_val is None:
+        return "—"
+    return html.escape(fmt_rating_score(rating_val))
+
+
+def _rating_score_html(
+    player: dict,
+    *,
+    soft_warning: bool = False,
+    rating_key: str = "pass_rating",
+) -> str:
+    return (
+        f"{_rating_score_value_html(player, rating_key=rating_key)}"
+        f"{_rating_sample_warning_html(player, soft=soft_warning, rating_key=rating_key)}"
+    )
+
+
+def fmt_rating_percentile(player: dict) -> str:
+    pct = player.get("rating_percentile")
+    if pct is None:
+        return "—"
+    return f"P{int(round(float(pct) * 100))}"
+
+
+def _rating_badges_html(player: dict) -> str:
+    """Deprecated legacy badges (Versatile / Dual-Elite). Kept as no-op."""
+    return ""
+
+
+# xP profile achievement badges shown on the player identity card.
+# (key, icon, css_class)
+_XP_IDENTITY_BADGES: tuple[tuple[str, str, str], ...] = (
+    ("threat", "fa-crosshairs", "threat"),
+    ("consistency", "fa-wave-square", "consistency"),
+)
+
+
+def _xp_identity_badges_html(xp_profile: dict | None) -> str:
+    if not xp_profile or not xp_profile.get("xp_profile_bars_eligible", True):
+        return ""
+    earned_flags = {
+        "threat": bool(xp_profile.get("xp_badge_threat_earned")),
+        "consistency": xp_profile.get("xp_idx_consistency_tier") == "above",
+    }
+    badges: list[str] = []
+    for key, icon, css_class in _XP_IDENTITY_BADGES:
+        if not earned_flags.get(key):
+            continue
+        badges.append(
+            f'<span class="pa-xp-achievement pa-xp-achievement-{css_class}">'
+            f'<i class="fa-solid {icon}" aria-hidden="true"></i>'
+            "</span>"
+        )
+    if not badges:
+        return ""
+    return f'<span class="rating-badge-row pa-xp-achievement-row">{"".join(badges)}</span>'
+
+_PROGRESSION_RADAR_METRIC_LABELS: dict[str, str] = {
+    "impact_passes_p90": "Imp P90",
+    "impact_per_pass": "Avg Imp",
+    "risk_pass_pct": "Risk %",
+    "positive_dxt_pct": "P +ΔxT",
+    "construction_aip_p90": "Build",
+    "aggression_aip_p90": "Attack",
+    "carry_impact_passes_p90": "C Imp",
+    "carry_dxt_per_pass": "C Avg",
+    "carry_threat_carry_pct": "C Risk %",
+    "carry_positive_dxt_pct": "C +ΔxT",
+    "carry_carries_impact_to_box_p90": "Box Imp",
+    "carry_dribbles_final_third_p90": "FT Drib",
+}
+_PASS_RADAR_METRIC_LABELS: dict[str, str] = {
+    key: label
+    for key, label in _PROGRESSION_RADAR_METRIC_LABELS.items()
+    if not key.startswith("carry_")
+}
+_CARRY_RADAR_METRIC_LABELS: dict[str, str] = {
+    key.removeprefix("carry_"): label
+    for key, label in _PROGRESSION_RADAR_METRIC_LABELS.items()
+    if key.startswith("carry_")
+}
+PA_RADAR_EXCLUDED_SECTIONS: frozenset[str] = frozenset()
+PA_RADAR_PASS_COLOR = "#60a5fa"
+PA_RADAR_CARRY_COLOR = "#34d399"
+PA_RADAR_FILL_NEUTRAL = "#c4b5fd"
+PA_XP_RADAR_LINE_COLOR = "#a855f7"
+PA_XP_RADAR_FILL_COLOR = "#a855f7"
+PA_COMPARE_PRIMARY_COLOR = "#a78bfa"
+PA_COMPARE_SECONDARY_COLOR = "#86efac"
+
+
+def _radar_axis_is_carry(metric_key: str, scout_section_specs) -> bool:
+    if str(metric_key).startswith("carry_"):
+        return True
+    return not any(str(section_key).startswith("pass_") for section_key, _, _, _ in scout_section_specs)
+
+
+def _radar_metric_keys_from_specs(
+    scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+) -> tuple[str, ...]:
+    keys: list[str] = []
+    for section_key, _, _, section_keys in scout_section_specs:
+        if "distance" in str(section_key):
+            continue
+        keys.extend(section_keys)
+    return tuple(keys)
+
+
+def _progression_radar_section_specs(
+    scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    return tuple(
+        spec for spec in scout_section_specs
+        if spec[0] not in PA_RADAR_EXCLUDED_SECTIONS
+    )
+
+
+def _progression_radar_metric_keys(
+    scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+) -> tuple[str, ...]:
+    return PROGRESSION_RADAR_METRIC_KEYS
+
+
+def _collect_radar_metric_points(
+    metric_keys: tuple[str, ...],
+    metric_ranks: dict,
+    label_map: dict[str, str],
+    scout_section_specs,
+) -> tuple[list[str], list[str], list[float], list[bool]]:
+    labels: list[str] = []
+    keys_out: list[str] = []
+    values: list[float] = []
+    is_carry: list[bool] = []
+    for key in metric_keys:
+        info = metric_ranks.get(key)
+        if not info:
+            continue
+        rank = int(info.get("rank") or 0)
+        total = int(info.get("total") or 0)
+        if rank <= 0 or total <= 0:
+            continue
+        keys_out.append(key)
+        labels.append(label_map.get(key, key[:6]))
+        values.append(rank_to_display_score(rank, total))
+        is_carry.append(_radar_axis_is_carry(key, scout_section_specs))
+    return keys_out, labels, values, is_carry
+
+
+def _collect_archetype_pillar_radar_data(
+    player: dict,
+) -> tuple[list[str], list[float], list[float], list[bool]]:
+    pillar_pct = player.get("player_pillar_pct")
+    if not isinstance(pillar_pct, dict) or not pillar_pct:
+        return [], [], [], []
+
+    labels = [pa_arch.PILLAR_LABELS[key] for key in pa_arch.PILLAR_KEYS]
+    values = pa_arch.pillar_display_scores(pillar_pct)
+    prototype_pct = player.get("player_archetype_prototype_pct")
+    prototype_values = (
+        pa_arch.prototype_display_scores(prototype_pct)
+        if isinstance(prototype_pct, dict) and prototype_pct
+        else []
+    )
+    carry_flags = [pa_arch.PILLAR_IS_CARRY[key] for key in pa_arch.PILLAR_KEYS]
+    return labels, values, prototype_values, carry_flags
+
+
+def _style_archetype_pillar_radar_ax(
+    ax,
+    angles: list[float],
+    labels: list[str],
+    carry_flags: list[bool],
+) -> None:
+    count = len(labels)
+    ax.set_ylim(3.0, 9.0)
+    ax.set_yticks([4, 5, 6, 7, 8])
+    ax.set_yticklabels([])
+    ax.set_xticks(angles)
+    ax.set_xticklabels(labels, fontsize=6.5, fontweight=600, linespacing=0.9)
+    for tick_label, is_carry in zip(ax.get_xticklabels(), carry_flags):
+        tick_label.set_color(PA_RADAR_CARRY_COLOR if is_carry else PA_RADAR_PASS_COLOR)
+    ax.tick_params(axis="x", pad=14)
+    ax.grid(color="#334155", alpha=0.45, linewidth=0.6)
+    ax.spines["polar"].set_color("#334155")
+    ax.spines["polar"].set_alpha(0.55)
+
+
+def _plot_archetype_silhouette_on_ax(
+    ax,
+    angles: list[float],
+    prototype_values: list[float],
+    *,
+    color: str = "#94a3b8",
+    fill_alpha: float = 0.08,
+    line_alpha: float = 0.35,
+) -> None:
+    import numpy as np
+
+    if len(prototype_values) < 3:
+        return
+    values_closed = prototype_values + [prototype_values[0]]
+    angles_closed = np.append(angles, angles[0])
+    ax.fill(
+        angles_closed,
+        values_closed,
+        color=color,
+        alpha=fill_alpha,
+        zorder=1,
+    )
+    ax.plot(
+        angles_closed,
+        values_closed,
+        color=color,
+        linewidth=1.6,
+        linestyle="-",
+        alpha=line_alpha,
+        zorder=3,
+    )
+
+
+def _plot_archetype_player_on_ax(
+    ax,
+    angles: list[float],
+    values: list[float],
+    carry_flags: list[bool],
+    *,
+    line_alpha: float,
+    fill_alpha: float,
+    fill_color: str,
+    pass_color: str = PA_RADAR_PASS_COLOR,
+    carry_color: str = PA_RADAR_CARRY_COLOR,
+    draw_fill: bool = True,
+) -> None:
+    import numpy as np
+
+    count = len(values)
+    values_closed = values + [values[0]]
+    angles_closed = np.append(angles, angles[0])
+    if draw_fill:
+        ax.fill(angles_closed, values_closed, color=fill_color, alpha=fill_alpha, zorder=2)
+    for i in range(count):
+        j = (i + 1) % count
+        seg_color = carry_color if carry_flags[i] else pass_color
+        ax.plot(
+            [angles[i], angles[j]],
+            [values[i], values[j]],
+            color=seg_color,
+            linewidth=2.4,
+            linestyle="-",
+            alpha=line_alpha,
+            zorder=4,
+        )
+    for angle, value, is_carry in zip(angles, values, carry_flags):
+        marker_color = carry_color if is_carry else pass_color
+        ax.plot(
+            angle,
+            value,
+            marker="o",
+            color=marker_color,
+            markersize=5.5,
+            markeredgecolor="#0f172a",
+            markeredgewidth=0.7,
+            alpha=line_alpha,
+            zorder=5,
+        )
+
+
+def _archetype_pillar_radar_b64(
+    player: dict,
+    *,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+    radar_figsize: tuple[float, float] = (3.5, 3.5),
+    fill_color: str | None = None,
+) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    labels, values, prototype_values, carry_flags = _collect_archetype_pillar_radar_data(player)
+    if len(values) < 3:
+        return ""
+
+    count = len(values)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False).tolist()
+    low_sample = _is_low_sample_rating(
+        player,
+        confidence_minutes=confidence_minutes,
+        confidence_passes=confidence_passes,
+    )
+    line_alpha = 0.55 if low_sample else 0.95
+    fill_alpha = 0.14 if low_sample else 0.22
+    radar_fill = fill_color or PA_RADAR_FILL_NEUTRAL
+
+    fig, ax = plt.subplots(
+        figsize=radar_figsize,
+        subplot_kw={"polar": True},
+        facecolor="none",
+    )
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+
+    if prototype_values:
+        _plot_archetype_silhouette_on_ax(ax, angles, prototype_values)
+
+    _plot_archetype_player_on_ax(
+        ax,
+        angles,
+        values,
+        carry_flags,
+        line_alpha=line_alpha,
+        fill_alpha=fill_alpha,
+        fill_color=radar_fill,
+    )
+    _style_archetype_pillar_radar_ax(ax, angles, labels, carry_flags)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.06)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _archetype_pillar_radar_compare_b64(primary: dict, secondary: dict) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    labels, primary_values, _, carry_flags = _collect_archetype_pillar_radar_data(primary)
+    _, secondary_values, _, _ = _collect_archetype_pillar_radar_data(secondary)
+    if len(primary_values) < 3 or len(secondary_values) < 3:
+        return ""
+
+    count = len(labels)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False).tolist()
+    fig, ax = plt.subplots(figsize=(3.8, 3.8), subplot_kw={"polar": True}, facecolor="none")
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+
+    _plot_archetype_player_on_ax(
+        ax,
+        angles,
+        primary_values,
+        carry_flags,
+        line_alpha=0.95,
+        fill_alpha=0.16,
+        fill_color=PA_COMPARE_PRIMARY_COLOR,
+        pass_color=PA_COMPARE_PRIMARY_COLOR,
+        carry_color=PA_COMPARE_PRIMARY_COLOR,
+        draw_fill=True,
+    )
+    _plot_archetype_player_on_ax(
+        ax,
+        angles,
+        secondary_values,
+        carry_flags,
+        line_alpha=0.9,
+        fill_alpha=0.0,
+        fill_color=PA_COMPARE_SECONDARY_COLOR,
+        pass_color=PA_COMPARE_SECONDARY_COLOR,
+        carry_color=PA_COMPARE_SECONDARY_COLOR,
+        draw_fill=False,
+    )
+    _style_archetype_pillar_radar_ax(ax, angles, labels, carry_flags)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.06)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _pillar_radar_b64(
+    player: dict,
+    *,
+    scout_section_specs=SCOUT_SECTION_SPECS,
+    metric_keys: tuple[str, ...] | None = None,
+    pillar_labels: dict[str, str] | None = None,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+    radar_figsize: tuple[float, float] = (3.4, 3.4),
+    line_color: str = "#60a5fa",
+    fill_color: str | None = None,
+) -> str:
+    return _metric_radar_b64(
+        player,
+        scout_section_specs=scout_section_specs,
+        metric_keys=metric_keys,
+        pillar_labels=pillar_labels,
+        confidence_minutes=confidence_minutes,
+        confidence_passes=confidence_passes,
+        radar_figsize=radar_figsize,
+        line_color=line_color,
+        fill_color=fill_color,
+    )
+
+
+def _metric_radar_b64(
+    player: dict,
+    *,
+    scout_section_specs=SCOUT_SECTION_SPECS,
+    metric_keys: tuple[str, ...] | None = None,
+    pillar_labels: dict[str, str] | None = None,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+    radar_figsize: tuple[float, float] = (3.4, 3.4),
+    line_color: str = "#60a5fa",
+    fill_color: str | None = None,
+) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    resolved_metric_keys = metric_keys or _radar_metric_keys_from_specs(scout_section_specs)
+    label_map = pillar_labels or {
+        key: _PROGRESSION_RADAR_METRIC_LABELS.get(
+            key,
+            _CARRY_RADAR_METRIC_LABELS.get(key, _PASS_RADAR_METRIC_LABELS.get(key, key[:6])),
+        )
+        for key in resolved_metric_keys
+    }
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    keys_out, labels, values, carry_flags = _collect_radar_metric_points(
+        resolved_metric_keys,
+        metric_ranks,
+        label_map,
+        scout_section_specs,
+    )
+    if len(values) < 3:
+        return ""
+
+    count = len(values)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False)
+    values_closed = values + [values[0]]
+    angles_closed = np.append(angles, angles[0])
+    low_sample = _is_low_sample_rating(
+        player,
+        confidence_minutes=confidence_minutes,
+        confidence_passes=confidence_passes,
+    )
+    line_alpha = 0.55 if low_sample else 0.95
+    fill_alpha = 0.12 if low_sample else 0.2
+    radar_fill = fill_color or PA_RADAR_FILL_NEUTRAL
+
+    fig, ax = plt.subplots(
+        figsize=radar_figsize,
+        subplot_kw={"polar": True},
+        facecolor="none",
+    )
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.fill(angles_closed, values_closed, color=radar_fill, alpha=fill_alpha, zorder=2)
+    for i in range(count):
+        j = (i + 1) % count
+        seg_color = PA_RADAR_CARRY_COLOR if carry_flags[i] else PA_RADAR_PASS_COLOR
+        seg_style = (0, (5, 3)) if carry_flags[i] else "-"
+        ax.plot(
+            [angles[i], angles[j]],
+            [values[i], values[j]],
+            color=seg_color,
+            linewidth=2.4,
+            linestyle=seg_style,
+            alpha=line_alpha,
+            zorder=4,
+        )
+    for angle, value, is_carry in zip(angles, values, carry_flags):
+        marker_color = PA_RADAR_CARRY_COLOR if is_carry else PA_RADAR_PASS_COLOR
+        ax.plot(
+            angle,
+            value,
+            marker="o",
+            color=marker_color,
+            markersize=5.5,
+            markeredgecolor="#0f172a",
+            markeredgewidth=0.7,
+            alpha=line_alpha,
+            zorder=5,
+        )
+    ax.set_ylim(3.0, 9.0)
+    ax.set_yticks([4, 5, 6, 7, 8])
+    ax.set_yticklabels([])
+    label_font = 6.2 if count > 10 else 7.0
+    ax.set_xticks(angles)
+    ax.set_xticklabels(labels, fontsize=label_font, fontweight=600)
+    for tick_label, is_carry in zip(ax.get_xticklabels(), carry_flags):
+        tick_label.set_color(PA_RADAR_CARRY_COLOR if is_carry else PA_RADAR_PASS_COLOR)
+    ax.tick_params(axis="x", pad=7 if count > 10 else 8)
+    ax.grid(color="#334155", alpha=0.45, linewidth=0.6)
+    ax.spines["polar"].set_color("#334155")
+    ax.spines["polar"].set_alpha(0.55)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.06)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _plot_player_radar_on_ax(
+    ax,
+    angles: list[float],
+    values: list[float],
+    carry_flags: list[bool],
+    *,
+    line_alpha: float,
+    fill_alpha: float,
+    fill_color: str,
+    pass_color: str,
+    carry_color: str,
+    draw_fill: bool = True,
+) -> None:
+    import numpy as np
+
+    count = len(values)
+    values_closed = values + [values[0]]
+    angles_closed = np.append(angles, angles[0])
+    if draw_fill:
+        ax.fill(angles_closed, values_closed, color=fill_color, alpha=fill_alpha, zorder=2)
+    for i in range(count):
+        j = (i + 1) % count
+        seg_color = carry_color if carry_flags[i] else pass_color
+        seg_style = (0, (5, 3)) if carry_flags[i] else "-"
+        ax.plot(
+            [angles[i], angles[j]],
+            [values[i], values[j]],
+            color=seg_color,
+            linewidth=2.2,
+            linestyle=seg_style,
+            alpha=line_alpha,
+            zorder=4,
+        )
+    for angle, value, is_carry in zip(angles, values, carry_flags):
+        marker_color = carry_color if is_carry else pass_color
+        ax.plot(
+            angle,
+            value,
+            marker="o",
+            color=marker_color,
+            markersize=5.0,
+            markeredgecolor="#0f172a",
+            markeredgewidth=0.6,
+            alpha=line_alpha,
+            zorder=5,
+        )
+
+
+def _pillar_radar_compare_b64(
+    primary: dict,
+    secondary: dict,
+    *,
+    metric_keys: tuple[str, ...] | None = None,
+    pillar_labels: dict[str, str] | None = None,
+    scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    resolved_metric_keys = metric_keys or PROGRESSION_RADAR_METRIC_KEYS
+    label_map = pillar_labels or _PROGRESSION_RADAR_METRIC_LABELS
+    primary_ranks = primary.get("metric_ranks") if isinstance(primary.get("metric_ranks"), dict) else {}
+    secondary_ranks = secondary.get("metric_ranks") if isinstance(secondary.get("metric_ranks"), dict) else {}
+
+    def _values_for(player_ranks: dict) -> tuple[list[str], list[float], list[bool]]:
+        keys_out, labels, values, carry_flags = _collect_radar_metric_points(
+            resolved_metric_keys,
+            player_ranks,
+            label_map,
+            scout_section_specs,
+        )
+        return labels, values, carry_flags
+
+    labels, primary_values, carry_flags = _values_for(primary_ranks)
+    _, secondary_values, _ = _values_for(secondary_ranks)
+    if len(primary_values) < 3 or len(secondary_values) < 3:
+        return ""
+
+    count = len(labels)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False).tolist()
+    fig, ax = plt.subplots(figsize=(3.8, 3.8), subplot_kw={"polar": True}, facecolor="none")
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+
+    _plot_player_radar_on_ax(
+        ax,
+        angles,
+        primary_values,
+        carry_flags,
+        line_alpha=0.95,
+        fill_alpha=0.16,
+        fill_color=PA_COMPARE_PRIMARY_COLOR,
+        pass_color=PA_COMPARE_PRIMARY_COLOR,
+        carry_color=PA_COMPARE_PRIMARY_COLOR,
+        draw_fill=True,
+    )
+    _plot_player_radar_on_ax(
+        ax,
+        angles,
+        secondary_values,
+        carry_flags,
+        line_alpha=0.9,
+        fill_alpha=0.0,
+        fill_color=PA_COMPARE_SECONDARY_COLOR,
+        pass_color=PA_COMPARE_SECONDARY_COLOR,
+        carry_color=PA_COMPARE_SECONDARY_COLOR,
+        draw_fill=False,
+    )
+
+    ax.set_ylim(3.0, 9.0)
+    ax.set_yticks([4, 5, 6, 7, 8])
+    ax.set_yticklabels([])
+    label_font = 6.2 if count > 10 else 7.0
+    ax.set_xticks(angles)
+    ax.set_xticklabels(labels, fontsize=label_font, fontweight=600)
+    for tick_label, is_carry in zip(ax.get_xticklabels(), carry_flags):
+        tick_label.set_color(PA_RADAR_CARRY_COLOR if is_carry else PA_RADAR_PASS_COLOR)
+    ax.tick_params(axis="x", pad=7 if count > 10 else 8)
+    ax.grid(color="#334155", alpha=0.45, linewidth=0.6)
+    ax.spines["polar"].set_color("#334155")
+    ax.spines["polar"].set_alpha(0.55)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.06)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _stat_numeric_value(player: dict, key: str) -> float | None:
+    if key == "minutes_pct":
+        pct = player.get("minutes_pct")
+        return float(pct * 100.0) if pct is not None else None
+    val = player.get(key)
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cmp_stat_pct_delta_html(self_val: float | None, other_val: float | None) -> str:
+    if self_val is None or other_val is None:
+        return ""
+    if abs(self_val - other_val) < 0.05:
+        return '<span class="cmp-delta flat" title="Tie">●</span>'
+    if other_val == 0:
+        pct = 100.0 if self_val > 0 else 0.0
+    else:
+        pct = abs((self_val - other_val) / other_val) * 100.0
+    if self_val > other_val:
+        return f'<span class="cmp-delta up" title="Above">▲ {pct:.0f}%</span>'
+    return f'<span class="cmp-delta down" title="Below">▼ {pct:.0f}%</span>'
+
+
+def _cmp_delta_compare_html(primary_val: float | None, compare_val: float | None) -> str:
+    """Arrow for the compare athlete only, relative to the main athlete."""
+    if primary_val is None or compare_val is None:
+        return ""
+    if abs(compare_val - primary_val) < 0.05:
+        return '<span class="cmp-delta flat" title="Tie">●</span>'
+    if compare_val > primary_val:
+        return '<span class="cmp-delta up" title="Above primary">▲</span>'
+    return '<span class="cmp-delta down" title="Below primary">▼</span>'
+
+
+def _progression_compare_stats_html(
+    primary: dict,
+    secondary: dict,
+    *,
+    label_fn=pg_analyst_metric_label,
+    fmt_pct_fn=pg_fmt_pct,
+    fmt_stat_fn=pg_fmt_stat_value,
+) -> str:
+    primary_name = html.escape(str(primary.get("player_name", "Player A")))
+    secondary_name = html.escape(str(secondary.get("player_name", "Player B")))
+    primary_ranks = primary.get("metric_ranks") if isinstance(primary.get("metric_ranks"), dict) else {}
+    secondary_ranks = secondary.get("metric_ranks") if isinstance(secondary.get("metric_ranks"), dict) else {}
+    rows = [
+        '<div class="player-card">',
+        '<div class="cmp-row cmp-row-head">',
+        "<span>Metric</span>",
+        f"<span>{primary_name}</span>",
+        f"<span>{secondary_name}</span>",
+        "</div>",
+    ]
+    for key in PROGRESSION_RADAR_METRIC_KEYS:
+        label = html.escape(label_fn(key))
+        p_val = html.escape(_stat_display(primary, key, fmt_pct_fn=fmt_pct_fn, fmt_stat_fn=fmt_stat_fn))
+        s_val = html.escape(_stat_display(secondary, key, fmt_pct_fn=fmt_pct_fn, fmt_stat_fn=fmt_stat_fn))
+        p_num = _stat_numeric_value(primary, key)
+        s_num = _stat_numeric_value(secondary, key)
+        s_delta = _cmp_stat_pct_delta_html(s_num, p_num)
+        p_info = primary_ranks.get(key)
+        s_info = secondary_ranks.get(key)
+        p_rank = ""
+        s_rank = ""
+        if p_info:
+            p_rank = html.escape(pg_rank_in_group_label(int(p_info["rank"]), primary.get("position_group")))
+        if s_info:
+            s_rank = html.escape(pg_rank_in_group_label(int(s_info["rank"]), secondary.get("position_group")))
+        rows.extend([
+            '<div class="cmp-row">',
+            f'<span class="cmp-cell-label">{label}</span>',
+            (
+                f'<span><span class="cmp-value-wrap">'
+                f'<span class="cmp-cell-value">{p_val}</span></span>'
+                f'{"<span class=\"cmp-rank-note\">" + p_rank + "</span>" if p_rank else ""}</span>'
+            ),
+            (
+                f'<span><span class="cmp-value-wrap">'
+                f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span>'
+                f'{"<span class=\"cmp-rank-note\">" + s_rank + "</span>" if s_rank else ""}</span>'
+            ),
+            "</div>",
+        ])
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def _xp_compare_profile_value(source: dict, key: str) -> tuple[str, float | None]:
+    if not source.get("xp_profile_bars_eligible", True):
+        return "—", None
+    val = source.get(key)
+    if val is None:
+        return "—", None
+    num = float(val)
+    return f"{num:.1f}", num
+
+
+def _xp_compare_metric_display(source: dict, key: str) -> str:
+    if key in xstats.XP_PROFILE_BAR_KEYS:
+        return _xp_compare_profile_value(source, key)[0]
+    return xstats.format_pa_stats_value(key, source.get(key))
+
+
+def _xp_compare_metric_numeric(source: dict, key: str) -> float | None:
+    val = source.get(key)
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _xp_compare_mini_bar_html(score: float | None) -> str:
+    if score is None:
+        return ""
+    pct = max(6.0, min(100.0, (float(score) - 3.0) / 6.0 * 100.0))
+    color = score_display_color(float(score))
+    return (
+        '<span class="pa-xp-compare-mini-bar">'
+        f'<span class="pa-xp-compare-mini-bar-fill" style="width:{pct:.0f}%;background:{color}"></span>'
+        "</span>"
+    )
+
+
+def _xp_compare_value_cell_html(
+    value: str,
+    *,
+    arrow_html: str = "",
+    mini_bar_html: str = "",
+) -> str:
+    bar_block = f'<span class="pa-xp-compare-mini-bar-wrap">{mini_bar_html}</span>' if mini_bar_html else ""
+    return (
+        '<span class="pa-xp-compare-cell">'
+        f'<span class="cmp-value-wrap"><span class="cmp-cell-value">{value}</span>{arrow_html}</span>'
+        f"{bar_block}"
+        "</span>"
+    )
+
+
+def _xp_compare_profile_row_html(
+    label: str,
+    primary: dict,
+    secondary: dict,
+    key: str,
+) -> str:
+    p_val, p_num = _xp_compare_profile_value(primary, key)
+    s_val, s_num = _xp_compare_profile_value(secondary, key)
+    arrow = _cmp_delta_compare_html(p_num, s_num)
+    p_bar = _xp_compare_mini_bar_html(p_num)
+    s_bar = _xp_compare_mini_bar_html(s_num)
+    return (
+        '<div class="cmp-row cmp-row-primary">'
+        f'<span class="cmp-cell-label cmp-cell-label-strong">{html.escape(label)}</span>'
+        f"{_xp_compare_value_cell_html(html.escape(p_val), mini_bar_html=p_bar)}"
+        f"{_xp_compare_value_cell_html(html.escape(s_val), arrow_html=arrow, mini_bar_html=s_bar)}"
+        "</div>"
+    )
+
+
+def _xp_compare_metric_label_html(label: str, key: str) -> str:
+    tip = (
+        xstats.XP_COMPARE_HIGHLIGHT_TOOLTIPS.get(key)
+        or xstats.XP_COMPARE_METRIC_TOOLTIPS.get(key)
+        or ""
+    ).strip()
+    if not tip:
+        return html.escape(label)
+    return (
+        f'<span class="metric-tip" tabindex="0">{html.escape(label)}'
+        f'<span class="metric-tipbox">{html.escape(tip)}</span></span>'
+    )
+
+
+def _xp_compare_highlight_row_html(
+    label: str,
+    primary: dict,
+    secondary: dict,
+    key: str,
+) -> str:
+    p_val = html.escape(_xp_compare_metric_display(primary, key))
+    s_val = html.escape(_xp_compare_metric_display(secondary, key))
+    p_num = _xp_compare_metric_numeric(primary, key)
+    s_num = _xp_compare_metric_numeric(secondary, key)
+    arrow = _cmp_delta_compare_html(p_num, s_num)
+    p_bar = _xp_compare_mini_bar_html(_xp_compare_metric_numeric(primary, f"{key}_sub_display"))
+    s_bar = _xp_compare_mini_bar_html(_xp_compare_metric_numeric(secondary, f"{key}_sub_display"))
+    return (
+        '<div class="cmp-row cmp-row-primary">'
+        f'<span class="cmp-cell-label cmp-cell-label-strong">{_xp_compare_metric_label_html(label, key)}</span>'
+        f"{_xp_compare_value_cell_html(p_val, mini_bar_html=p_bar)}"
+        f"{_xp_compare_value_cell_html(s_val, arrow_html=arrow, mini_bar_html=s_bar)}"
+        "</div>"
+    )
+
+
+def _xp_compare_metric_row_html(
+    label: str,
+    primary: dict,
+    secondary: dict,
+    key: str,
+) -> str:
+    p_val = html.escape(_xp_compare_metric_display(primary, key))
+    s_val = html.escape(_xp_compare_metric_display(secondary, key))
+    p_num = _xp_compare_metric_numeric(primary, key)
+    s_num = _xp_compare_metric_numeric(secondary, key)
+    arrow = _cmp_delta_compare_html(p_num, s_num)
+    return (
+        '<div class="cmp-row cmp-row-secondary">'
+        f'<span class="cmp-cell-label">{_xp_compare_metric_label_html(label, key)}</span>'
+        f"{_xp_compare_value_cell_html(p_val)}"
+        f"{_xp_compare_value_cell_html(s_val, arrow_html=arrow)}"
+        "</div>"
+    )
+
+
+def _xp_compare_stats_html(
+    primary: dict,
+    secondary: dict,
+    *,
+    primary_name: str,
+    secondary_name: str,
+) -> str:
+    primary_name = html.escape(str(primary_name or "Player A"))
+    secondary_name = html.escape(str(secondary_name or "Player B"))
+    rows = [
+        '<div class="player-card pa-xp-compare-card">',
+        '<div class="pa-xp-compare-legend">',
+        f'<span class="pa-xp-compare-legend-primary">{primary_name}</span>',
+        f'<span class="pa-xp-compare-legend-secondary">{secondary_name}</span>',
+        "</div>",
+        '<div class="cmp-row cmp-row-head">',
+        "<span>Metric</span>",
+        f'<span>{primary_name}</span>',
+        f'<span>{secondary_name}</span>',
+        "</div>",
+        '<div class="pa-xp-compare-group pa-xp-compare-group-primary">',
+        '<div class="pa-xp-compare-group-title">Highlighted comparison</div>',
+    ]
+    for key in xstats.XP_COMPARE_HIGHLIGHT_KEYS:
+        rows.append(
+            _xp_compare_highlight_row_html(
+                xstats.XP_COMPARE_HIGHLIGHT_LABELS.get(key, key),
+                primary,
+                secondary,
+                key,
+            )
+        )
+    rows.append("</div>")
+    rows.append('<div class="pa-xp-compare-group pa-xp-compare-group-secondary">')
+    rows.append('<div class="pa-xp-compare-group-title">Key Metrics</div>')
+    for key in xstats.XP_COMPARE_METRIC_KEYS:
+        rows.append(
+            _xp_compare_metric_row_html(
+                xstats.XP_COMPARE_METRIC_LABELS.get(key, key),
+                primary,
+                secondary,
+                key,
+            )
+        )
+    rows.append("</div>")
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def _xp_compare_player_source(
+    player: dict | None,
+    xp_profile: dict | None,
+    *,
+    pass_player: dict | None = None,
+) -> dict:
+    """Merge xP profile with per-90 regular pass stats for side-by-side comparison."""
+    base = {**(player or {}), **(xp_profile or {})}
+    if pass_player:
+        base = pg_enrich_traditional_participation_fields(
+            base,
+            pass_player=pass_player,
+        )
+    if xp_profile:
+        base = {**base, **xp_profile}
+    return base
+
+
+_COMPARE_PROFILE_KEYS: tuple[str, ...] = (
+    "dominant_foot",
+    "age",
+    "height",
+    "nationality",
+    "minutes",
+)
+
+_COMPARE_PROFILE_SHORT_LABELS: dict[str, str] = {
+    "dominant_foot": "Foot",
+    "age": "Age",
+    "height": "Height",
+    "nationality": "Nation",
+    "minutes": "Minutes",
+}
+
+_COMPARE_PROFILE_ICONS: dict[str, str] = {
+    "dominant_foot": "fa-shoe-prints",
+    "age": "fa-cake-candles",
+    "height": "fa-ruler-vertical",
+    "nationality": "fa-flag",
+    "minutes": "fa-clock",
+}
+
+
+def _player_origin_heatmap_b64(
+    player_id: str,
+    passes_by_player: dict,
+    player_name: str,
+) -> str | None:
+    passes_df = passes_by_player.get(player_id)
+    if passes_df is None or passes_df.empty:
+        return None
+    fig_origin = draw_action_origin_smooth_heatmap(
+        passes_df,
+        None,
+        str(player_name),
+        profile=True,
+    )
+    return _fig_to_b64(fig_origin)
+
+
+def _compare_profile_plain_value(player: dict, key: str, *, fmt_pct_fn) -> str:
+    if key == "minutes":
+        minutes = player.get("minutes")
+        minutes_pct = player.get("minutes_pct")
+        if minutes is None:
+            return "—"
+        main = str(int(round(float(minutes))))
+        if minutes_pct is not None:
+            return f"{main} ({fmt_pct_fn(minutes_pct)})"
+        return main
+    value = player.get(key)
+    if value is None or value == "":
+        return "—"
+    if key == "age":
+        return str(int(value))
+    return str(value)
+
+
+def _compare_sheet_player_head_html(player: dict, *, variant: str) -> str:
+    search_pos = sim.player_search_position(player)
+    group_label = sim.similarity_position_label(search_pos) if search_pos else "—"
+    return (
+        f'<div class="pa-compare-sheet-player pa-compare-sheet-player-{html.escape(variant)}">'
+        f'<div class="pa-compare-photo-wrap">{_player_photo_html(player)}</div>'
+        '<div class="pa-compare-sheet-player-text">'
+        f'<div class="pa-compare-player-name">{html.escape(str(player.get("player_name", "—")))}</div>'
+        '<div class="pa-compare-player-sub">'
+        f"{html.escape(str(player.get('team', '—')))} · "
+        f"{html.escape(str(player.get('position', '—')))} · "
+        f"{html.escape(group_label)}"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
+def _compare_sheet_row_html(
+    label: str,
+    primary_html: str,
+    secondary_html: str,
+    *,
+    row_class: str = "",
+) -> str:
+    return (
+        f'<div class="pa-compare-sheet-row {row_class}">'
+        f'<span class="pa-compare-sheet-label">{html.escape(label)}</span>'
+        f'<span class="pa-compare-sheet-val pa-compare-sheet-val-primary">{primary_html}</span>'
+        f'<span class="pa-compare-sheet-val pa-compare-sheet-val-secondary">{secondary_html}</span>'
+        "</div>"
+    )
+
+
+def _compare_sheet_heatmap_cell_html(heatmap_b64: str | None) -> str:
+    if heatmap_b64:
+        return (
+            '<div class="pa-compare-heatmap-wrap">'
+            f'<img class="pa-compare-heatmap" src="data:image/png;base64,{heatmap_b64}" '
+            'alt="Pass origin heatmap" />'
+            "</div>"
+        )
+    return '<span class="pa-compare-heatmap-empty">Unavailable</span>'
+
+
+def _xp_compare_sheet_metric_row_html(
+    label: str,
+    primary: dict,
+    secondary: dict,
+    key: str,
+    *,
+    highlight: bool = False,
+) -> str:
+    p_val = html.escape(_xp_compare_metric_display(primary, key))
+    s_val = html.escape(_xp_compare_metric_display(secondary, key))
+    p_num = _xp_compare_metric_numeric(primary, key)
+    s_num = _xp_compare_metric_numeric(secondary, key)
+    arrow = _cmp_delta_compare_html(p_num, s_num)
+    p_bar = _xp_compare_mini_bar_html(
+        _xp_compare_metric_numeric(primary, f"{key}_sub_display")
+    )
+    s_bar = _xp_compare_mini_bar_html(
+        _xp_compare_metric_numeric(secondary, f"{key}_sub_display")
+    )
+    row_cls = "pa-compare-sheet-row-highlight" if highlight else ""
+    label_html = _xp_compare_metric_label_html(label, key) if highlight else html.escape(label)
+    return (
+        f'<div class="pa-compare-sheet-row {row_cls}">'
+        f'<span class="pa-compare-sheet-label">{label_html}</span>'
+        f"{_xp_compare_value_cell_html(p_val, mini_bar_html=p_bar)}"
+        f"{_xp_compare_value_cell_html(s_val, arrow_html=arrow, mini_bar_html=s_bar)}"
+        "</div>"
+    )
+
+
+def _build_pa_compare_layout_html(
+    primary_player: dict,
+    compare_player: dict,
+    primary_source: dict,
+    secondary_source: dict,
+    *,
+    primary_heatmap_b64: str | None,
+    compare_heatmap_b64: str | None,
+    fmt_pct_fn,
+) -> str:
+    rows: list[str] = [
+        '<div class="player-card pa-compare-sheet-card">',
+        '<div class="pa-compare-sheet">',
+        '<div class="pa-compare-sheet-row pa-compare-sheet-head">',
+        '<span class="pa-compare-sheet-label">Player</span>',
+        _compare_sheet_player_head_html(primary_player, variant="primary"),
+        _compare_sheet_player_head_html(compare_player, variant="secondary"),
+        "</div>",
+        '<div class="pa-compare-sheet-section">Profile</div>',
+    ]
+    for key in _COMPARE_PROFILE_KEYS:
+        label = _COMPARE_PROFILE_SHORT_LABELS.get(key, key)
+        p_val = html.escape(_compare_profile_plain_value(primary_player, key, fmt_pct_fn=fmt_pct_fn))
+        s_val = html.escape(_compare_profile_plain_value(compare_player, key, fmt_pct_fn=fmt_pct_fn))
+        rows.append(_compare_sheet_row_html(label, p_val, s_val))
+    rows.append(
+        _compare_sheet_row_html(
+            "Pass origin",
+            _compare_sheet_heatmap_cell_html(primary_heatmap_b64),
+            _compare_sheet_heatmap_cell_html(compare_heatmap_b64),
+            row_class="pa-compare-sheet-row-heatmap",
+        )
+    )
+    rows.append('<div class="pa-compare-sheet-section">Highlighted metrics</div>')
+    for key in xstats.XP_COMPARE_HIGHLIGHT_KEYS:
+        rows.append(
+            _xp_compare_sheet_metric_row_html(
+                xstats.XP_COMPARE_HIGHLIGHT_LABELS.get(key, key),
+                primary_source,
+                secondary_source,
+                key,
+                highlight=True,
+            )
+        )
+    rows.append('<div class="pa-compare-sheet-section">Key metrics</div>')
+    for key in xstats.XP_COMPARE_METRIC_KEYS:
+        rows.append(
+            _xp_compare_sheet_metric_row_html(
+                xstats.XP_COMPARE_METRIC_LABELS.get(key, key),
+                primary_source,
+                secondary_source,
+                key,
+            )
+        )
+    rows.extend(["</div>", "</div>"])
+    return "".join(rows)
+
+
+def _render_xp_comparison_panel(
+    primary: dict,
+    *,
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    pass_by_id: dict[str, dict],
+    xp_by_id: dict[str, dict],
+    passes_by_player: dict,
+    fmt_pct_fn=pg_fmt_pct,
+) -> None:
+    primary_id = str(primary.get("player_id"))
+    primary_xp = xp_by_id.get(primary_id)
+    if not primary_xp:
+        st.info("xP metrics unavailable for comparison.")
+        return
+
+    comparison_codes, comparison_groups = _comparison_position_filter_for_player(primary)
+    pool_label = _comparison_pool_label(primary)
+    options = _player_analysis_options(
+        all_players,
+        progression_by_id,
+        position_codes=comparison_codes,
+        position_groups=comparison_groups,
+        xp_by_id=xp_by_id,
+        exclude_player_id=primary_id,
+        sort_by="xp_pass_rating",
+    )
+    if not options:
+        st.info(f"No other player available in the {pool_label} group for comparison.")
+        return
+
+    st.caption(f"Same position group: {pool_label}.")
+
+    labels = [o[3] for o in options]
+    id_by_label = {o[3]: o[0] for o in options}
+    current_label = st.session_state.get(PLAYER_ANALYSIS_COMPARE_KEY)
+    if current_label and current_label not in labels:
+        st.session_state.pop(PLAYER_ANALYSIS_COMPARE_KEY, None)
+
+    compare_label = st.selectbox(
+        "Compare with",
+        options=labels,
+        key=PLAYER_ANALYSIS_COMPARE_KEY,
+        placeholder="Select another player",
+    )
+    if not compare_label:
+        st.info("Select a second player to compare.")
+        return
+
+    compare_id = id_by_label[compare_label]
+    compare_xp = xp_by_id.get(compare_id)
+    if not compare_xp:
+        st.warning("xP metrics unavailable for the selected player.")
+        return
+
+    compare_player = progression_by_id.get(compare_id) or pass_by_id.get(compare_id, {})
+    compare_player = pp.enrich_player_general_profile(compare_player)
+    primary_source = _xp_compare_player_source(
+        primary,
+        primary_xp,
+        pass_player=pass_by_id.get(primary_id),
+    )
+    secondary_source = _xp_compare_player_source(
+        compare_player,
+        compare_xp,
+        pass_player=pass_by_id.get(compare_id),
+    )
+    primary_heatmap_b64 = _player_origin_heatmap_b64(
+        primary_id,
+        passes_by_player,
+        str(primary.get("player_name", "")),
+    )
+    compare_heatmap_b64 = _player_origin_heatmap_b64(
+        compare_id,
+        passes_by_player,
+        str(compare_player.get("player_name", compare_xp.get("player_name", ""))),
+    )
+    st.html(
+        _build_pa_compare_layout_html(
+            primary,
+            compare_player,
+            primary_source,
+            secondary_source,
+            primary_heatmap_b64=primary_heatmap_b64,
+            compare_heatmap_b64=compare_heatmap_b64,
+            fmt_pct_fn=fmt_pct_fn,
+        ),
+        width="stretch",
+    )
+
+
+def _render_player_comparison_panel(
+    primary: dict,
+    *,
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    xp_by_id: dict[str, dict] | None = None,
+) -> None:
+    primary_id = str(primary.get("player_id"))
+    comparison_codes, comparison_groups = _comparison_position_filter_for_player(primary)
+    pool_label = _comparison_pool_label(primary)
+    options = _player_analysis_options(
+        all_players,
+        progression_by_id,
+        position_codes=comparison_codes,
+        position_groups=comparison_groups,
+        xp_by_id=xp_by_id,
+        exclude_player_id=primary_id,
+        sort_by="xp_pass_rating",
+    )
+    if not options:
+        st.info(f"No other player available in the {pool_label} group for comparison.")
+        return
+
+    st.caption(f"Comparing within the group: {pool_label} (e.g. right backs with all fullbacks).")
+
+    labels = [o[3] for o in options]
+    id_by_label = {o[3]: o[0] for o in options}
+    current_label = st.session_state.get(PLAYER_ANALYSIS_COMPARE_KEY)
+    if current_label and current_label not in labels:
+        st.session_state.pop(PLAYER_ANALYSIS_COMPARE_KEY, None)
+
+    compare_label = st.selectbox(
+        "Compare with",
+        options=labels,
+        key=PLAYER_ANALYSIS_COMPARE_KEY,
+        placeholder="Select another player",
+    )
+    if not compare_label:
+        st.info("Select a second player to compare the pillar profile and stats.")
+        return
+
+    compare_id = id_by_label[compare_label]
+    compare_player = progression_by_id.get(compare_id)
+    if compare_player is None:
+        st.warning("Could not load the selected player profile.")
+        return
+
+    b64 = _pillar_radar_compare_b64(primary, compare_player)
+    if b64:
+        legend = (
+            '<div class="pa-compare-legend">'
+            f'<span class="pa-compare-legend-primary">{html.escape(str(primary.get("player_name", "A")))}</span>'
+            f'<span class="pa-compare-legend-secondary">{html.escape(str(compare_player.get("player_name", "B")))}</span>'
+            "</div>"
+        )
+        radar = (
+            f'<div class="pa-compare-radar-wrap">'
+            f'<img class="rating-radar" src="data:image/png;base64,{b64}" alt="Pillar profile comparison">'
+            "</div>"
+        )
+        st.markdown(legend + radar, unsafe_allow_html=True)
+
+    st.html(
+        _progression_compare_stats_html(
+            primary,
+            compare_player,
+            label_fn=pg_analyst_metric_label,
+            fmt_pct_fn=pg_fmt_pct,
+            fmt_stat_fn=pg_fmt_stat_value,
+        ),
+        width="stretch",
+    )
+
+
+def _pillar_radar_inner_html(player: dict, **kwargs) -> str:
+    b64 = _pillar_radar_b64(player, **kwargs)
+    if not b64:
+        return ""
+    metric_count = len(
+        kwargs.get("metric_keys")
+        or _radar_metric_keys_from_specs(kwargs.get("scout_section_specs", SCOUT_SECTION_SPECS))
+    )
+    return (
+        f'<span class="rating-radar-wrap" title="{metric_count} metric scores">'
+        f'<img class="rating-radar" src="data:image/png;base64,{b64}" alt="Pillar radar">'
+        "</span>"
+    )
+
+
+def _pillar_radar_card_html(player: dict, **kwargs) -> str:
+    inner = _pillar_radar_inner_html(player, **kwargs)
+    if not inner:
+        return ""
+    title = "Pillar profile"
+    legend_player = '<span class="pa-radar-legend-item pa-radar-legend-pass">Passes</span>'
+    legend_carry = '<span class="pa-radar-legend-item pa-radar-legend-carry">Carries</span>'
+    return (
+        '<div class="player-card radar-card">'
+        f'<div class="radar-card-title">{title}</div>'
+        f'<div class="radar-card-body">{inner}</div>'
+        '<div class="pa-radar-legend">'
+        f"{legend_player}"
+        f"{legend_carry}"
+        "</div>"
+        "</div>"
+    )
+
+PRES_DEMO_KEY = "pres_active_demo"
+FONT_AWESOME_CDN = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+PLAYER_ANALYSIS_CARD_HEIGHT_PX = 620
+
+st.set_page_config(page_title=f"{APP_NAME} | {APP_LEAGUE}", layout="wide", initial_sidebar_state="collapsed")
+
+st.markdown(
+    f'<link rel="stylesheet" href="{FONT_AWESOME_CDN}" crossorigin="anonymous" referrerpolicy="no-referrer" />',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 1.25rem; max-width: 1600px; }
+    .player-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 1rem 1.1rem;
+        margin-bottom: 0.65rem;
+    }
+    .player-info-card .player-header-stats {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+        justify-content: stretch;
+        margin-top: 0.75rem;
+    }
+    .player-info-card .rating-row { margin-top: 0.75rem; }
+    .player-meta-rating-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-top: 0.1rem;
+    }
+    .player-sub-line {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        color: #94a3b8;
+        font-size: 0.85rem;
+        min-width: 0;
+    }
+    .player-rating-slot {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.35rem;
+        flex-shrink: 0;
+    }
+    .radar-card {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 0.95rem 1rem 1.05rem;
+    }
+    .radar-card-title {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #8fa3bf;
+        margin-bottom: 0.55rem;
+    }
+    .radar-card-body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 240px;
+    }
+    .radar-card .rating-radar-wrap {
+        width: 100%;
+        max-width: 300px;
+        height: 280px;
+    }
+    .radar-card .rating-radar {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+    .rating-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+        min-width: 0;
+    }
+    .rating-box-low-sample {
+        border-style: dashed !important;
+        border-width: 2px !important;
+        border-color: rgba(0, 0, 0, 0.72) !important;
+    }
+    .rating-box-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .rating-warning-soft {
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #d4a017;
+        opacity: 0.82;
+        filter: none;
+    }
+    .rating-radar-wrap {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 148px;
+        height: 148px;
+    }
+    .rating-radar {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+    .rating-cell-wrap {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.2rem;
+        white-space: nowrap;
+    }
+    .rating-badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        align-items: center;
+    }
+    .rating-badge-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        cursor: help;
+    }
+    .rating-achievement-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.28);
+        box-shadow: 0 0 0 1px rgba(0,0,0,0.18);
+    }
+    .rating-achievement-dot.pareto { background: #38bdf8; }
+    .rating-achievement-dot.archetype { background: #a78bfa; }
+    .rating-achievement-dot.dual-elite { background: #f59e0b; }
+    .rating-fa-badge {
+        font-size: 0.82rem;
+        width: 1rem;
+        text-align: center;
+        line-height: 1;
+    }
+    .rating-fa-badge.versatile { color: #38bdf8; }
+    .rating-fa-badge.complete { color: #a78bfa; }
+    .rating-fa-badge.dual-elite { color: #f59e0b; }
+    .sub-rating-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        justify-content: flex-end;
+        margin-top: 0.2rem;
+    }
+    .sub-rating-chip {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #cbd5e1;
+        background: #1f2937;
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 0.12rem 0.45rem;
+        white-space: nowrap;
+    }
+    .rating-badge-tip:hover .rating-tipbox {
+        display: block;
+        white-space: normal;
+        max-width: 220px;
+        text-align: left;
+        font-weight: 500;
+        line-height: 1.35;
+    }
+
+    .player-info-card .header-stat strong { font-size: 0.98rem; }
+    .header-stat {
+        font-size: 0.84rem;
+        color: #94a3b8;
+        white-space: nowrap;
+    }
+    .header-stat strong {
+        display: block;
+        color: #f8fafc;
+        font-size: 1.02rem;
+        font-weight: 700;
+        margin-top: 0.1rem;
+    }
+    .rating-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-bottom: 0;
+    }
+    .rating-warning-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+    }
+    .rating-warning {
+        font-size: 1.2rem;
+        line-height: 1;
+        cursor: help;
+        color: #fbbf24;
+        filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.35));
+    }
+    .player-card h3 { margin: 0 0 0.15rem 0; color: #f1f5f9; font-size: 1.15rem; }
+    .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0; }
+    .player-card .rating-box {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 76px;
+        height: 50px;
+        padding: 0 12px;
+        border-radius: 8px;
+        font-size: 1.55rem;
+        font-weight: 800;
+        margin-bottom: 0;
+        border: 1px solid rgba(255,255,255,0.16);
+        letter-spacing: 0.02em;
+    }
+    .metric-line .stat-val {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .metric-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.32rem 0;
+        border-bottom: 1px solid #1f293f;
+        font-size: 0.88rem;
+        color: #cbd5e1;
+    }
+    .metric-line span:last-child { white-space: nowrap; }
+    .val-wrap { display: inline-flex; align-items: center; gap: 0.5rem; }
+    .rank-bar {
+        position: relative;
+        display: inline-block;
+        width: 2.6rem;
+        height: 0.38rem;
+        border-radius: 999px;
+        background: #1e293b;
+        overflow: hidden;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.12);
+        cursor: help;
+    }
+    .rank-bar-fill {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        min-width: 2px;
+    }
+    .rank-badge {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        min-width: 12px;
+        border-radius: 3px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.2);
+        cursor: help;
+    }
+    .rank-tip, .rating-tip, .section-rating-tip {
+        position: relative;
+        display: inline-flex;
+    }
+    .rank-tipbox, .rating-tipbox, .rating-rank-tipbox, .rating-sample-tipbox {
+        display: none;
+        position: absolute;
+        z-index: 100;
+        left: 50%;
+        bottom: calc(100% + 6px);
+        transform: translateX(-50%);
+        background: #111827;
+        border: 1px solid #3d4f6f;
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        white-space: nowrap;
+        box-shadow: 0 8px 20px rgba(0,0,0,.4);
+        pointer-events: none;
+    }
+    .rank-tip:hover .rank-tipbox,
+    .rating-tip:hover .rating-rank-tipbox,
+    .section-rating-tip:hover .rating-tipbox,
+    .rating-sample-tip:hover .rating-sample-tipbox,
+    .rating-badge-tip:hover .rating-tipbox,
+    .rating-warning-tip:hover .rating-tipbox,
+    .metric-tip:hover .metric-tipbox,
+    .metric-tip:focus-within .metric-tipbox {
+        display: block;
+    }
+    .metric-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        cursor: help;
+        border-bottom: 1px dotted #475569;
+    }
+    .metric-tipbox {
+        display: none;
+        position: absolute;
+        z-index: 120;
+        left: 0;
+        bottom: calc(100% + 6px);
+        min-width: 200px;
+        max-width: 280px;
+        background: #111827;
+        border: 1px solid #3d4f6f;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 0.72rem;
+        font-weight: 500;
+        line-height: 1.35;
+        color: #e2e8f0;
+        white-space: normal;
+        box-shadow: 0 8px 20px rgba(0,0,0,.45);
+        pointer-events: none;
+    }
+    .metric-rank-sub {
+        display: block;
+        margin-top: 0.12rem;
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: #64748b;
+        letter-spacing: 0.01em;
+    }
+    .cmp-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem 1.25rem;
+        margin-top: 0.5rem;
+    }
+    .cmp-section-title {
+        grid-column: 1 / -1;
+        color: #93c5fd;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-top: 0.35rem;
+        padding-top: 0.35rem;
+        border-top: 1px solid #1f293f;
+    }
+    .cmp-section-title:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+    .cmp-row {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr 1fr;
+        gap: 0.75rem;
+        align-items: end;
+        padding: 0.45rem 0;
+        border-bottom: 1px solid #1a2236;
+    }
+    .cmp-row-head {
+        color: #94a3b8;
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding-bottom: 0.2rem;
+        border-bottom: 1px solid #2a3550;
+    }
+    .cmp-row-section {
+        border-bottom: none;
+        padding-top: 0.55rem;
+        padding-bottom: 0.1rem;
+    }
+    .cmp-row-section .cmp-section-label {
+        color: #93c5fd;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .cmp-cell-label { color: #cbd5e1; font-size: 0.84rem; }
+    .cmp-rank-note {
+        display: block;
+        font-size: 0.68rem;
+        color: #94a3b8;
+        margin-top: 0.1rem;
+    }
+    .cmp-cell-value {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .pres-card {
+        position: relative;
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 0.85rem;
+        scroll-margin-top: 30vh;
+    }
+    @keyframes pres-xp-target-glow {
+        0% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.0); border-color: #334155; }
+        25% { box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.45); border-color: #60a5fa; }
+        100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.0); border-color: #334155; }
+    }
+    #pres-xp-card:target {
+        animation: pres-xp-target-glow 1.8s ease-out 1;
+    }
+    .pres-card h4 { margin: 0 0 0.35rem 0; color: #e2e8f0; font-size: 1rem; }
+    .pres-card p { margin: 0; color: #94a3b8; font-size: 0.88rem; line-height: 1.45; }
+    .pres-card-hero {
+        border-color: #334155;
+        background: linear-gradient(145deg, #172035 0%, #101522 55%, #0f172a 100%);
+        padding: 1.15rem 1.25rem;
+    }
+    .pres-card-hero h4 { font-size: 1.12rem; color: #f1f5f9; }
+    .pres-card-with-icon {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    .pres-card-with-icon .pres-about-body { flex: 1; min-width: 0; }
+    .pres-card-with-icon .pres-about-body h4 { margin: 0 0 0.35rem 0; }
+    .pres-card-with-icon .pres-hero-list,
+    .pres-card-with-icon .pres-calc-list { margin-top: 0.35rem; }
+    .pres-step-num {
+        position: absolute;
+        top: 0.85rem;
+        right: 1rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 50%;
+        background: rgba(51, 65, 85, 0.55);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        font-weight: 700;
+    }
+    .pres-step-num-accent {
+        background: rgba(96, 165, 250, 0.2);
+        border-color: rgba(96, 165, 250, 0.55);
+        color: #93c5fd;
+    }
+    .pres-xp-ref {
+        position: relative;
+        color: #93c5fd;
+        font-weight: 700;
+        text-decoration: none;
+        border-bottom: 1px dashed rgba(147, 197, 253, 0.55);
+        padding-bottom: 1px;
+        transition: color 0.14s ease, border-color 0.14s ease;
+    }
+    .pres-xp-ref:hover { color: #bfdbfe; border-color: #bfdbfe; }
+    .pres-xp-ref-mark {
+        font-size: 0.6em;
+        font-weight: 700;
+        vertical-align: super;
+        margin-left: 1px;
+        color: #60a5fa;
+    }
+    .pres-cards-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+    }
+    @media (max-width: 900px) {
+        .pres-cards-row { grid-template-columns: 1fr; }
+        .pres-layout-demo { grid-template-columns: 1fr !important; }
+    }
+    .pres-mini-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.95rem 1rem;
+        height: 100%;
+    }
+    .pres-mini-card h4 { margin: 0 0 0.3rem 0; color: #93c5fd; font-size: 0.92rem; }
+    .pres-mini-card p { margin: 0; color: #94a3b8; font-size: 0.84rem; line-height: 1.42; }
+    .pres-cards-2 {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+    }
+    .pres-cards-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+    }
+    .pres-cards-3 h5 em {
+        margin-left: 0.3rem;
+        color: #93a4bc;
+        font-size: 0.72rem;
+        font-weight: 700;
+        font-style: normal;
+        font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 700px) {
+        .pres-cards-2 { grid-template-columns: 1fr; }
+        .pres-cards-3 { grid-template-columns: 1fr; }
+    }
+    .pres-cards-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.7rem;
+        margin-bottom: 0.85rem;
+    }
+    @media (max-width: 900px) {
+        .pres-cards-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+    .pres-tile {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 14px;
+        padding: 0.95rem 0.9rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .pres-tile:hover { border-color: #3b82f6; transform: translateY(-2px); }
+    .pres-tile .pres-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 10px;
+        font-size: 0.95rem;
+        color: #dbeafe;
+        background: rgba(59, 130, 246, 0.16);
+        border: 1px solid rgba(96, 165, 250, 0.4);
+        margin-bottom: 0.15rem;
+    }
+    .pres-tile.pres-dim .pres-icon {
+        color: #e9d5ff;
+        background: rgba(124, 58, 237, 0.18);
+        border-color: rgba(167, 139, 250, 0.45);
+    }
+    .pres-tile h5 {
+        margin: 0;
+        color: #f1f5f9;
+        font-size: 0.9rem;
+        font-weight: 700;
+    }
+    .pres-tile p {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.8rem;
+        line-height: 1.4;
+    }
+    .pres-section-label {
+        margin: 0.35rem 0 0.55rem;
+        color: #8fa3bf;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+    }
+    .pres-xp-examples {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.7rem;
+        margin-bottom: 0.7rem;
+    }
+    @media (max-width: 900px) {
+        .pres-xp-examples { grid-template-columns: 1fr; }
+    }
+    .pres-xp-example {
+        position: relative;
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-left-width: 3px;
+        border-radius: 12px;
+        padding: 0.9rem 0.95rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+    .pres-xp-example h5 {
+        margin: 0.1rem 0 0;
+        color: #f1f5f9;
+        font-size: 0.92rem;
+        font-weight: 700;
+    }
+    .pres-xp-example p {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.8rem;
+        line-height: 1.45;
+    }
+    .pres-xp-tag {
+        align-self: flex-start;
+        font-size: 0.66rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 0.14rem 0.5rem;
+        border-radius: 999px;
+    }
+    .pres-xp-low { border-left-color: #6b7280; }
+    .pres-xp-low .pres-xp-tag { background: rgba(107,114,128,0.18); color: #cbd5e1; }
+    .pres-xp-mid { border-left-color: #f59e0b; }
+    .pres-xp-mid .pres-xp-tag { background: rgba(245,158,11,0.16); color: #fcd34d; }
+    .pres-xp-high { border-left-color: #ef4444; }
+    .pres-xp-high .pres-xp-tag { background: rgba(239,68,68,0.18); color: #fca5a5; }
+    .pres-xp-note {
+        padding: 0.8rem 1.05rem;
+        margin-bottom: 0.85rem;
+        border-left: 3px solid #60a5fa;
+    }
+    .pres-xp-note p { margin: 0; color: #cbd5e1; font-size: 0.86rem; line-height: 1.5; }
+    .pres-xp-calc-steps {
+        margin: 0.65rem 0 0 0;
+        padding-left: 1.15rem;
+        color: #94a3b8;
+        font-size: 0.86rem;
+        line-height: 1.55;
+    }
+    .pres-xp-calc-steps li { margin-bottom: 0.35rem; }
+    .pres-xp-calc-steps strong { color: #e2e8f0; font-weight: 600; }
+    .pres-hero-list {
+        list-style: none;
+        margin: 0.35rem 0 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    .pres-hero-list li {
+        position: relative;
+        padding-left: 1.4rem;
+        color: #cbd5e1;
+        font-size: 0.9rem;
+        line-height: 1.55;
+    }
+    .pres-hero-list li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.55rem;
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: #60a5fa;
+        box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.16);
+    }
+    .pres-hero-list em {
+        color: #f1f5f9;
+        font-style: italic;
+        font-weight: 500;
+    }
+    .pres-calc-list {
+        list-style: none;
+        margin: 0.5rem 0 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+    }
+    .pres-calc-list li {
+        position: relative;
+        padding-left: 1.3rem;
+        color: #94a3b8;
+        font-size: 0.87rem;
+        line-height: 1.5;
+    }
+    .pres-calc-list li::before {
+        content: "";
+        position: absolute;
+        left: 0.1rem;
+        top: 0.6rem;
+        width: 0.4rem;
+        height: 0.4rem;
+        border-radius: 50%;
+        background: #60a5fa;
+    }
+    .pres-calc-list strong { color: #e2e8f0; font-weight: 600; }
+    .pres-about-card {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        background: linear-gradient(145deg, #172035 0%, #101522 60%, #0f172a 100%);
+        border: 1px solid #334155;
+        border-radius: 14px;
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 0.85rem;
+        scroll-margin-top: 1rem;
+    }
+    .pres-about-icon {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.9rem;
+        height: 2.9rem;
+        border-radius: 12px;
+        font-size: 1.25rem;
+        color: #dbeafe;
+        background: rgba(59, 130, 246, 0.16);
+        border: 1px solid rgba(96, 165, 250, 0.4);
+    }
+    .pres-about-icons {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+    }
+    .pres-about-icon-ip {
+        color: #fecaca;
+        background: rgba(239, 68, 68, 0.14);
+        border-color: rgba(248, 113, 113, 0.45);
+    }
+    .pres-about-body h4 { margin: 0 0 0.3rem 0; color: #f1f5f9; font-size: 1rem; }
+    .pres-about-body p { margin: 0; color: #94a3b8; font-size: 0.88rem; line-height: 1.5; }
+    .pres-about-body p + p { margin-top: 0.5rem; }
+    .pres-about-body strong { color: #e2e8f0; font-weight: 600; }
+    .pres-feature-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.95rem 1rem 0.55rem;
+        min-height: 7.2rem;
+        margin-bottom: 0.35rem;
+    }
+    .pres-feature-card.open {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.22);
+    }
+    .pres-feature-card h4 {
+        margin: 0 0 0.35rem 0;
+        color: #93c5fd;
+        font-size: 0.95rem;
+    }
+    .pres-feature-card p {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.82rem;
+        line-height: 1.4;
+    }
+    .pres-demo-wrap { margin: 0.15rem 0 1rem 0; }
+    .pres-blur-panel-wide {
+        min-height: 300px;
+    }
+    .pres-flow {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.65rem;
+    }
+    @media (max-width: 900px) {
+        .pres-flow { grid-template-columns: repeat(2, 1fr); }
+    }
+    .pres-flow-step {
+        text-align: center;
+        padding: 0.55rem 0.35rem;
+    }
+    .pres-flow-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.65rem;
+        height: 1.65rem;
+        border-radius: 999px;
+        background: #1e3a8a;
+        color: #dbeafe;
+        font-size: 0.8rem;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
+    }
+    .pres-flow-step strong {
+        display: block;
+        color: #e2e8f0;
+        font-size: 0.86rem;
+        margin-bottom: 0.2rem;
+    }
+    .pres-flow-step span.desc {
+        color: #94a3b8;
+        font-size: 0.76rem;
+        line-height: 1.35;
+    }
+    .pres-sim-mock {
+        padding: 1rem 1.1rem;
+        color: #cbd5e1;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .pres-sim-mock-head {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        margin-bottom: 0.65rem;
+    }
+    .pres-sim-mock-field {
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 0.55rem 0.75rem;
+        font-size: 0.84rem;
+        color: #94a3b8;
+        margin-bottom: 0.75rem;
+    }
+    .pres-sim-mock-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+        margin-bottom: 0.85rem;
+    }
+    .pres-sim-mock-table th,
+    .pres-sim-mock-table td {
+        padding: 7px 9px;
+        border-bottom: 1px solid #243049;
+        text-align: left;
+    }
+    .pres-sim-mock-table th {
+        color: #8fa3bf;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .pres-sim-mock-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+    }
+    .pres-sim-mock-map {
+        background: #0c1220;
+        border: 1px solid #2a3550;
+        border-radius: 8px;
+        aspect-ratio: 3 / 2;
+    }
+    .pres-sim-mock-metrics {
+        margin-top: 0.75rem;
+        background: #111827;
+        border: 1px solid #2a3550;
+        border-radius: 8px;
+        height: 4.5rem;
+    }
+    .pres-grid-demo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+    }
+    .pres-layout-demo {
+        display: grid;
+        grid-template-columns: 1.68fr 0.72fr;
+        gap: 0.45rem;
+        align-items: stretch;
+    }
+    .pres-blur-tile {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        aspect-ratio: 3 / 2;
+        background: #101522;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+    }
+    .pres-blur-tile img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        filter: blur(7px);
+        transform: scale(1.08);
+        opacity: 0.9;
+    }
+    .pres-blur-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        padding: 0.7rem 0.8rem;
+        pointer-events: none;
+    }
+    .pres-blur-caption {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 0.55rem 0.75rem;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.84);
+        max-width: 92%;
+    }
+    .pres-blur-overlay strong {
+        color: #f1f5f9;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin-bottom: 0.3rem;
+        line-height: 1.25;
+    }
+    .pres-blur-overlay p {
+        color: #cbd5e1;
+        font-size: 0.76rem;
+        line-height: 1.4;
+        margin: 0;
+        max-width: 16rem;
+    }
+    .pres-blur-panel {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #2a3550;
+        min-height: 100%;
+        background: #101522;
+    }
+    .pres-blur-back {
+        filter: blur(5px);
+        transform: scale(1.02);
+        pointer-events: none;
+        user-select: none;
+        opacity: 0.85;
+    }
+    .pres-blur-overlay-side {
+        justify-content: center;
+        padding: 1.1rem;
+    }
+    .pres-blur-overlay-side .pres-blur-caption {
+        background: rgba(0, 0, 0, 0.9);
+        padding: 0.85rem 1rem;
+    }
+    .pres-blur-overlay-side strong { font-size: 1rem; max-width: 14rem; }
+    .pres-blur-overlay-side p { font-size: 0.82rem; max-width: 15rem; }
+    .pres-card-sim { border-color: #1e3a5f; }
+    .ranking-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.85rem;
+        margin-top: 0.35rem;
+    }
+    @media (max-width: 1100px) {
+        .ranking-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 720px) {
+        .ranking-grid { grid-template-columns: 1fr; }
+    }
+    .ranking-card-wrap {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    }
+    .ranking-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.72rem 0.9rem;
+        border-bottom: 1px solid #243049;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #e2e8f0;
+    }
+    .ranking-card-head span {
+        font-size: 0.72rem;
+        color: #64748b;
+        font-weight: 600;
+    }
+    .pres-step {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        margin: 0.55rem 0;
+    }
+    .pres-step-num {
+        flex-shrink: 0;
+        width: 1.55rem;
+        height: 1.55rem;
+        border-radius: 999px;
+        background: #1e3a8a;
+        color: #dbeafe;
+        font-size: 0.78rem;
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .grade-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        padding: 0.85rem 0.9rem;
+        min-height: 112px;
+        margin-bottom: 0.35rem;
+    }
+    .grade-card-title {
+        color: #93c5fd;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        line-height: 1.25;
+    }
+    .grade-card-rank {
+        margin-top: 0.18rem;
+        font-size: 0.72rem;
+        color: #64748b;
+    }
+    .grade-accordion {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        margin-bottom: 0.45rem;
+        overflow: hidden;
+    }
+    .grade-accordion summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 0.72rem 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+    }
+    .grade-accordion summary::-webkit-details-marker { display: none; }
+    .grade-arrow {
+        color: #93c5fd;
+        font-size: 0.72rem;
+        line-height: 1;
+        transition: transform 0.18s ease;
+        flex-shrink: 0;
+        width: 0.85rem;
+        text-align: center;
+    }
+    .grade-accordion[open] .grade-arrow { transform: rotate(90deg); }
+    .grade-summary-main { flex: 1; min-width: 0; }
+    .grade-summary-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.65rem;
+    }
+    .grade-card-score {
+        flex-shrink: 0;
+        align-self: center;
+    }
+    .grade-accordion-body {
+        padding: 0.15rem 0.85rem 0.8rem;
+        border-top: 1px solid #1f293f;
+    }
+    .grade-accordion-body .metric-line:last-child { border-bottom: none; }
+    .sidebar-stack { display: flex; flex-direction: column; gap: 0.35rem; }
+    div[data-testid="column"] [data-testid="stPyplot"] {
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
+    }
+    div[data-testid="column"] [data-testid="stPyplot"] img {
+        display: block;
+        width: 100% !important;
+        height: auto !important;
+        object-fit: contain;
+    }
+    div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
+        gap: 0.2rem;
+    }
+    [data-testid="stMain"] [data-testid="stHeader"] {
+        padding-top: 0.3rem;
+        padding-bottom: 0.12rem;
+    }
+    [data-testid="stMain"] [data-testid="stCaptionContainer"] p {
+        margin-bottom: 0.28rem;
+    }
+    [data-testid="stMain"] .element-container:has([data-testid="stSelectbox"]) {
+        margin-bottom: 0.15rem !important;
+    }
+    [data-testid="stMain"] div[data-testid="stCustomComponentV1"] {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    .dashboard-sidebar-col {
+        height: 100%;
+        min-height: 0;
+    }
+    .dashboard-sidebar-stack {
+        justify-content: flex-start;
+        gap: 0.28rem;
+    }
+    .dashboard-sidebar-stack .player-info-card {
+        flex: 0 0 auto;
+        padding: 0.8rem 0.85rem;
+        margin-bottom: 0;
+    }
+    .dashboard-sidebar-stack .player-info-card h3 {
+        font-size: 1.05rem;
+    }
+    .dashboard-sidebar-stack .player-info-card .sub {
+        font-size: 0.8rem;
+    }
+    .dashboard-sidebar-stack .metric-line {
+        padding: 0.24rem 0;
+    }
+    .dashboard-sidebar-stack .grade-accordion {
+        flex: 0 0 auto;
+        min-height: 0;
+        margin-bottom: 0;
+    }
+    .dashboard-sidebar-stack .grade-accordion summary {
+        padding: 0.5rem 0.65rem;
+        align-items: center;
+        min-height: 0;
+    }
+    .dashboard-sidebar-stack .grade-card-title {
+        font-size: 0.7rem;
+    }
+    .dashboard-sidebar-stack .grade-card-rank {
+        font-size: 0.68rem;
+        margin-top: 0.1rem;
+    }
+    .dashboard-sidebar-stack .section-rating-pill {
+        min-width: 46px;
+        padding: 3px 9px;
+        font-size: 0.76rem;
+    }
+    .cmp-delta {
+        display: inline-block;
+        font-size: 0.62rem;
+        line-height: 1;
+        margin-left: 0.35rem;
+        vertical-align: middle;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+    .cmp-delta.up { color: #34d399; }
+    .cmp-delta.down { color: #f87171; }
+    .cmp-delta.flat { color: #475569; }
+    .cmp-value-wrap { display: inline-flex; align-items: center; }
+    .st-key-pa_subtabs div[data-baseweb="tab-list"] {
+        gap: 0.5rem;
+        background: transparent;
+        border-bottom: 1px solid #243049;
+        margin-bottom: 0.85rem;
+    }
+    .st-key-pa_subtabs button[data-baseweb="tab"] {
+        border-radius: 10px 10px 0 0;
+        padding: 0.35rem 0.4rem;
+        background: transparent;
+    }
+    .st-key-pa_subtabs button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] p {
+        font-size: 0.98rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        color: #64748b;
+        text-transform: uppercase;
+    }
+    .st-key-pa_subtabs button[data-baseweb="tab"][aria-selected="true"] [data-testid="stMarkdownContainer"] p {
+        color: #f8fafc;
+        background: linear-gradient(90deg, #a78bfa, #60a5fa);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .st-key-pa_subtabs div[data-baseweb="tab-highlight"] {
+        background: linear-gradient(90deg, #a78bfa, #60a5fa);
+        height: 3px;
+        border-radius: 3px;
+    }
+    .pa-compare-hero {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.85rem 1.05rem;
+        margin-bottom: 0.9rem;
+        border-radius: 14px;
+        background: linear-gradient(120deg, rgba(167,139,250,0.16), rgba(96,165,250,0.08) 60%, rgba(15,23,42,0.2));
+        border: 1px solid #2e3a57;
+    }
+    .pa-compare-hero-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: linear-gradient(145deg, #a78bfa, #60a5fa);
+        color: #0b1120;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+    }
+    .pa-compare-hero-text { display: flex; flex-direction: column; gap: 0.12rem; }
+    .pa-compare-hero-title {
+        font-size: 1.12rem;
+        font-weight: 800;
+        color: #f1f5f9;
+        letter-spacing: 0.01em;
+    }
+    .pa-compare-hero-sub { font-size: 0.82rem; color: #94a3b8; }
+    .pa-compare-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .pa-compare-sheet-card {
+        padding: 0;
+        overflow: hidden;
+    }
+    .pa-compare-sheet {
+        display: flex;
+        flex-direction: column;
+    }
+    .pa-compare-sheet-row {
+        display: grid;
+        grid-template-columns: minmax(6.8rem, 0.78fr) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.58rem 1rem;
+        border-bottom: 1px solid #1a2236;
+    }
+    .pa-compare-sheet-row:last-child { border-bottom: none; }
+    .pa-compare-sheet-head {
+        align-items: start;
+        padding-top: 0.9rem;
+        padding-bottom: 0.75rem;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.55), rgba(15, 23, 42, 0.08));
+        border-bottom: 1px solid #243049;
+    }
+    .pa-compare-sheet-section {
+        padding: 0.62rem 1rem 0.38rem;
+        color: #93c5fd;
+        font-size: 0.66rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-bottom: 1px solid #243049;
+        background: rgba(9, 14, 27, 0.5);
+    }
+    .pa-compare-sheet-label {
+        color: #64748b;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }
+    .pa-compare-sheet-val {
+        color: #e2e8f0;
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1.35;
+        min-width: 0;
+    }
+    .pa-compare-sheet-val-primary { color: #f8fafc; }
+    .pa-compare-sheet-val-secondary { color: #e2e8f0; }
+    .pa-compare-sheet-player {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        min-width: 0;
+    }
+    .pa-compare-sheet-player-text { min-width: 0; }
+    .pa-compare-sheet-row-heatmap {
+        align-items: start;
+        padding-top: 0.7rem;
+        padding-bottom: 0.8rem;
+    }
+    .pa-compare-sheet-row-highlight .pa-compare-sheet-label {
+        color: #cbd5e1;
+        font-weight: 800;
+    }
+    .pa-compare-sheet-row .pa-xp-compare-cell {
+        min-width: 0;
+    }
+    .pa-compare-sheet-row .cmp-cell-value {
+        font-size: 0.92rem;
+        font-weight: 700;
+    }
+    .pa-compare-sheet-row-highlight .cmp-cell-value {
+        font-size: 1rem;
+        color: #f8fafc;
+    }
+    .pa-compare-photo-wrap .pa-identity-photo,
+    .pa-compare-photo-wrap .pa-identity-photo-placeholder {
+        width: 3.1rem;
+        height: 3.1rem;
+        border-radius: 11px;
+        font-size: 0.9rem;
+    }
+    .pa-compare-player-name {
+        color: #f8fafc;
+        font-size: 0.96rem;
+        font-weight: 800;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .pa-compare-player-sub {
+        margin-top: 0.16rem;
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 600;
+        line-height: 1.35;
+    }
+    .pa-compare-heatmap-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 132px;
+        padding: 0.35rem;
+        border-radius: 10px;
+        background: rgba(9, 14, 27, 0.65);
+        border: 1px solid rgba(51, 65, 85, 0.55);
+        overflow: hidden;
+    }
+    .pa-compare-heatmap {
+        width: 100%;
+        max-height: 150px;
+        object-fit: contain;
+        display: block;
+        border-radius: 7px;
+    }
+    .pa-compare-heatmap-empty {
+        color: #64748b;
+        font-size: 0.72rem;
+        font-style: italic;
+    }
+    .pa-xp-compare-card {
+        padding: 1rem 1.15rem 0.9rem;
+    }
+    .pa-xp-compare-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1.25rem;
+        margin-bottom: 0.85rem;
+        padding-bottom: 0.65rem;
+        border-bottom: 1px solid #243049;
+    }
+    .pa-xp-compare-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #e2e8f0;
+    }
+    .pa-xp-compare-legend span::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        flex-shrink: 0;
+    }
+    .pa-xp-compare-legend-primary::before { background: #a78bfa; }
+    .pa-xp-compare-legend-secondary::before { background: #86efac; }
+    .pa-xp-compare-group { margin-top: 0.7rem; }
+    .pa-xp-compare-group-title {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #93c5fd;
+        margin-bottom: 0.35rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid #1f293f;
+    }
+    .pa-xp-compare-group-secondary .pa-xp-compare-group-title { color: #7c8aa5; }
+    .cmp-row-primary {
+        align-items: center;
+        padding: 0.55rem 0.55rem;
+        border-radius: 10px;
+        border-bottom: none;
+        margin-bottom: 0.3rem;
+        background: linear-gradient(90deg, rgba(147,197,253,0.07), rgba(15,23,42,0.0) 78%);
+    }
+    .cmp-row-primary .cmp-cell-label-strong {
+        color: #f8fafc;
+        font-size: 0.95rem;
+        font-weight: 700;
+    }
+    .cmp-row-primary .cmp-cell-value { font-size: 1.12rem; }
+    .cmp-row-secondary {
+        align-items: center;
+        padding: 0.34rem 0.55rem;
+        border-bottom: 1px solid #18202f;
+    }
+    .cmp-row-secondary .cmp-cell-label { color: #94a3b8; font-size: 0.82rem; }
+    .cmp-row-secondary .cmp-cell-value { font-size: 0.98rem; font-weight: 600; color: #e2e8f0; }
+    .pa-xp-compare-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.3rem;
+    }
+    .pa-xp-compare-mini-bar-wrap {
+        display: block;
+        width: 100%;
+        max-width: 130px;
+    }
+    .pa-xp-compare-mini-bar {
+        display: block;
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: #1e293b;
+        overflow: hidden;
+    }
+    .pa-xp-compare-mini-bar-fill {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+    }
+    .stat-section-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.7rem;
+        margin-bottom: 0.25rem;
+    }
+    .stat-section {
+        color: #93c5fd;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .section-rating-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 52px;
+        padding: 4px 11px;
+        border-radius: 7px;
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        border: 1px solid rgba(255,255,255,0.18);
+        white-space: nowrap;
+    }
+    section[data-testid="stSidebar"] { display: none; }
+    .pa-shell { max-width: 1380px; margin: 0.15rem auto 1.25rem auto; }
+    .stats-shell { max-width: 920px; margin: 0.15rem auto 1.25rem auto; }
+    .stats-panel {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 0.35rem 0.85rem 0.65rem 0.85rem;
+    }
+    .stats-panel .grade-accordion {
+        margin-bottom: 0.35rem;
+    }
+    .stats-panel .grade-accordion:last-child {
+        margin-bottom: 0;
+    }
+    .stats-panel .grade-accordion summary {
+        padding: 0.55rem 0.35rem;
+    }
+    .stats-panel .grade-card-title {
+        font-size: 0.82rem;
+    }
+    .dist-index-grade-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 108px;
+        padding: 4px 11px;
+        border-radius: 7px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        border: 1px solid rgba(255,255,255,0.18);
+        white-space: nowrap;
+    }
+    .stats-panel .stat-section-row { margin-top: 0.65rem; }
+    .stats-panel .stat-section-row:first-child { margin-top: 0.15rem; }
+    .stats-player-head {
+        margin: 0 0 0.75rem 0;
+        color: #f8fafc;
+        font-size: 1.35rem;
+        font-weight: 700;
+    }
+    .stats-player-meta {
+        margin: -0.35rem 0 0.85rem 0;
+        color: #94a3b8;
+        font-size: 0.88rem;
+    }
+    .pa-slicer-panel {
+        margin-top: -0.35rem;
+        margin-bottom: 0.9rem;
+    }
+    /* Full-width horizontal filter bar */
+    .st-key-pa_filter_card {
+        background: linear-gradient(180deg, rgba(30,41,59,0.55) 0%, rgba(15,23,42,0.35) 100%);
+        border: 1px solid rgba(148,163,184,0.18);
+        border-radius: 16px;
+        padding: 0.95rem 1.2rem 0.8rem 1.2rem;
+        box-shadow: 0 6px 22px rgba(2,6,23,0.28);
+    }
+    .pa-filter-head {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.3rem 0.7rem;
+        margin: 0 0 0.55rem 0;
+    }
+    .pa-filter-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.95rem;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        color: #e2e8f0;
+        margin: 0;
+    }
+    .pa-filter-title .pa-filter-ic {
+        color: #38bdf8;
+        font-size: 0.95rem;
+    }
+    .pa-filter-sub {
+        color: #94a3b8;
+        font-size: 0.78rem;
+        margin: 0;
+        line-height: 1.35;
+    }
+    /* Align every control in the bar on a single baseline */
+    .st-key-pa_filter_card [data-testid="stHorizontalBlock"] { align-items: flex-end; }
+    .st-key-pa_filter_card [data-testid="stVerticalBlock"] { gap: 0.3rem; }
+    .pa-filter-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem 0.9rem;
+        margin-top: 0.6rem;
+        padding-top: 0.6rem;
+        border-top: 1px dashed rgba(148,163,184,0.22);
+    }
+    .pa-filter-count {
+        color: #cbd5e1;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .pa-filter-count strong { color: #38bdf8; }
+    .st-key-pa_filter_card label[data-testid="stWidgetLabel"] p {
+        font-size: 0.78rem !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #93a4bc !important;
+    }
+    .pa-ondemand-head {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin: 0.35rem 0 0.55rem 0;
+        font-size: 1.02rem;
+        font-weight: 800;
+        color: #e2e8f0;
+    }
+    .pa-ondemand-head .pa-ondemand-ic { color: #38bdf8; }
+    /* Segmented controls: tighter pills so every control fits the bar */
+    .st-key-pa_filter_card [data-baseweb="button-group"] button {
+        padding-left: 0.6rem !important;
+        padding-right: 0.6rem !important;
+        font-size: 0.8rem !important;
+        font-weight: 700 !important;
+    }
+    .pa-profile-divider {
+        height: 1px;
+        background: linear-gradient(90deg, rgba(148,163,184,0) 0%, rgba(148,163,184,0.28) 50%, rgba(148,163,184,0) 100%);
+        margin: 0.9rem 0 0.3rem 0;
+    }
+    /* Pull the profile tabs up so top row and profile read as one block */
+    .st-key-pa_subtabs { margin-top: -0.4rem; }
+    .st-key-pa_slicer_panel {
+        margin-top: -0.35rem;
+        margin-bottom: 0.9rem;
+    }
+    .pa-slicer-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1rem;
+        align-items: flex-start;
+        margin-bottom: 0.85rem;
+    }
+    .pa-position-blocks,
+    .st-key-pa_position_blocks,
+    .st-key-pa_archetype_blocks,
+    .st-key-maps_position_blocks {
+        width: 100%;
+        height: auto !important;
+        min-height: 0 !important;
+    }
+    .pa-position-blocks [data-testid="stHorizontalBlock"],
+    .st-key-pa_position_blocks [data-testid="stHorizontalBlock"],
+    .st-key-pa_archetype_blocks [data-testid="stHorizontalBlock"],
+    .st-key-maps_position_blocks [data-testid="stHorizontalBlock"] {
+        gap: 0.35rem;
+        align-items: stretch;
+    }
+    .pa-position-blocks [data-testid="column"],
+    .st-key-pa_position_blocks [data-testid="column"],
+    .st-key-pa_archetype_blocks [data-testid="column"],
+    .st-key-maps_position_blocks [data-testid="column"] {
+        min-width: 0;
+    }
+    .pa-position-blocks [data-testid="stButton"],
+    .st-key-pa_position_blocks [data-testid="stButton"],
+    .st-key-pa_archetype_blocks [data-testid="stButton"],
+    .st-key-maps_position_blocks [data-testid="stButton"],
+    div[class*="st-key-pa_pos_block_"] [data-testid="stButton"],
+    div[class*="st-key-pa_arch_block_"] [data-testid="stButton"],
+    div[class*="st-key-maps_pos_block_"] [data-testid="stButton"] {
+        width: 100%;
+    }
+    .pa-position-blocks [data-testid="stCheckbox"],
+    .st-key-pa_position_blocks [data-testid="stCheckbox"],
+    .st-key-maps_position_blocks [data-testid="stCheckbox"],
+    div[class*="st-key-pa_pos_cb_"] [data-testid="stCheckbox"],
+    div[class*="st-key-scatter_pos_cb_"] [data-testid="stCheckbox"] {
+        width: 100%;
+        min-height: 2.85rem;
+        margin: 0;
+        padding: 0.2rem 0.35rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+    }
+    .pa-position-blocks [data-testid="stCheckbox"]:has(input:checked),
+    .st-key-pa_position_blocks [data-testid="stCheckbox"]:has(input:checked),
+    .st-key-maps_position_blocks [data-testid="stCheckbox"]:has(input:checked),
+    div[class*="st-key-pa_pos_cb_"] [data-testid="stCheckbox"]:has(input:checked),
+    div[class*="st-key-scatter_pos_cb_"] [data-testid="stCheckbox"]:has(input:checked) {
+        background: linear-gradient(160deg, #1e3a5f 0%, #172554 100%);
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.22);
+    }
+    .pa-position-blocks [data-testid="stCheckbox"] label,
+    .st-key-pa_position_blocks [data-testid="stCheckbox"] label,
+    .st-key-maps_position_blocks [data-testid="stCheckbox"] label,
+    div[class*="st-key-pa_pos_cb_"] [data-testid="stCheckbox"] label,
+    div[class*="st-key-scatter_pos_cb_"] [data-testid="stCheckbox"] label {
+        width: 100%;
+        margin: 0;
+        padding-left: 0.15rem;
+        font-size: 0.62rem;
+        font-weight: 700;
+        line-height: 1.12;
+        color: #93c5fd;
+        text-align: center;
+    }
+    .pa-position-blocks [data-testid="stCheckbox"]:has(input:checked) label,
+    .st-key-pa_position_blocks [data-testid="stCheckbox"]:has(input:checked) label,
+    .st-key-maps_position_blocks [data-testid="stCheckbox"]:has(input:checked) label,
+    div[class*="st-key-pa_pos_cb_"] [data-testid="stCheckbox"]:has(input:checked) label,
+    div[class*="st-key-scatter_pos_cb_"] [data-testid="stCheckbox"]:has(input:checked) label {
+        color: #dbeafe;
+    }
+    .pa-position-blocks [data-testid="stCheckbox"] label p,
+    .st-key-pa_position_blocks [data-testid="stCheckbox"] label p,
+    .st-key-maps_position_blocks [data-testid="stCheckbox"] label p,
+    div[class*="st-key-pa_pos_cb_"] [data-testid="stCheckbox"] label p,
+    div[class*="st-key-scatter_pos_cb_"] [data-testid="stCheckbox"] label p {
+        font-size: 0.62rem;
+        margin: 0;
+    }
+    .pa-position-blocks [data-testid="stButton"] button,
+    .st-key-pa_position_blocks [data-testid="stButton"] button,
+    .st-key-pa_archetype_blocks [data-testid="stButton"] button,
+    .st-key-maps_position_blocks [data-testid="stButton"] button,
+    div[class*="st-key-pa_pos_block_"] button,
+    div[class*="st-key-pa_arch_block_"] button,
+    div[class*="st-key-maps_pos_block_"] button {
+        width: 100%;
+        min-height: 2.85rem;
+        max-height: 2.85rem;
+        padding: 0.3rem 0.2rem;
+        font-size: 0.62rem;
+        font-weight: 700;
+        line-height: 1.12;
+        white-space: normal;
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%) !important;
+        border: 1px solid #2a3550 !important;
+        color: #93c5fd !important;
+        border-radius: 10px !important;
+        box-shadow: none !important;
+    }
+    .pa-position-blocks [data-testid="stButton"] button:hover,
+    .st-key-pa_position_blocks [data-testid="stButton"] button:hover,
+    .st-key-pa_archetype_blocks [data-testid="stButton"] button:hover,
+    .st-key-maps_position_blocks [data-testid="stButton"] button:hover,
+    div[class*="st-key-pa_pos_block_"] button:hover,
+    div[class*="st-key-pa_arch_block_"] button:hover,
+    div[class*="st-key-maps_pos_block_"] button:hover {
+        border-color: #3b82f6 !important;
+        color: #dbeafe !important;
+    }
+    .pa-position-blocks [data-testid="stButton"] button[kind="primary"],
+    .pa-position-blocks [data-testid="stButton"] button[data-testid="baseButton-primary"],
+    .st-key-pa_position_blocks [data-testid="stButton"] button[kind="primary"],
+    .st-key-pa_position_blocks [data-testid="stButton"] button[data-testid="baseButton-primary"],
+    .st-key-pa_archetype_blocks [data-testid="stButton"] button[kind="primary"],
+    .st-key-pa_archetype_blocks [data-testid="stButton"] button[data-testid="baseButton-primary"],
+    .st-key-maps_position_blocks [data-testid="stButton"] button[kind="primary"],
+    .st-key-maps_position_blocks [data-testid="stButton"] button[data-testid="baseButton-primary"],
+    div[class*="st-key-pa_pos_block_"] button[kind="primary"],
+    div[class*="st-key-pa_arch_block_"] button[kind="primary"],
+    div[class*="st-key-maps_pos_block_"] button[kind="primary"],
+    div[class*="st-key-pa_pos_block_"] button[data-testid="baseButton-primary"],
+    div[class*="st-key-pa_arch_block_"] button[data-testid="baseButton-primary"],
+    div[class*="st-key-maps_pos_block_"] button[data-testid="baseButton-primary"] {
+        background: linear-gradient(160deg, #1e3a5f 0%, #172554 100%) !important;
+        border-color: #3b82f6 !important;
+        color: #dbeafe !important;
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.22) !important;
+    }
+    .pa-position-block-label {
+        width: 100%;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #8fa3bf;
+        margin-bottom: 0.15rem;
+    }
+    .pa-player-slicer,
+    .st-key-pa_player_slicer,
+    .st-key-pa_archetype_slicer,
+    .st-key-pa_position_slicer,
+    .st-key-scatter_position_slicer,
+    .st-key-maps_player_slicer {
+        width: 100%;
+        min-width: 220px;
+        height: auto !important;
+        min-height: 0 !important;
+    }
+    /* Keep slicer columns only as tall as their content */
+    [data-testid="stHorizontalBlock"]:has(.st-key-pa_position_slicer),
+    [data-testid="stHorizontalBlock"]:has(.st-key-pa_position_blocks),
+    [data-testid="stHorizontalBlock"]:has(.st-key-maps_position_blocks) {
+        align-items: flex-start !important;
+        margin-bottom: 0.25rem !important;
+    }
+    .st-key-pa_position_slicer [data-testid="stVerticalBlock"],
+    .st-key-pa_position_blocks [data-testid="stVerticalBlock"],
+    .st-key-maps_position_blocks [data-testid="stVerticalBlock"],
+    .st-key-pa_player_slicer [data-testid="stVerticalBlock"],
+    .st-key-pa_archetype_slicer [data-testid="stVerticalBlock"],
+    .st-key-maps_player_slicer [data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+    .pa-compare-radar-wrap {
+        display: flex;
+        justify-content: center;
+        margin: 0.5rem 0 0.85rem;
+    }
+    .pa-compare-radar-wrap img {
+        width: 100%;
+        max-width: 420px;
+        height: auto;
+    }
+    .pa-compare-legend {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #94a3b8;
+        margin-bottom: 0.65rem;
+    }
+    .pa-compare-legend span::before {
+        content: "";
+        display: inline-block;
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 999px;
+        margin-right: 0.3rem;
+        vertical-align: middle;
+    }
+    .pa-compare-legend-primary::before { background: #a78bfa; }
+    .pa-compare-legend-secondary::before { background: #86efac; }
+    .pa-maps-compact {
+        max-width: 1080px;
+        margin: 0 auto;
+    }
+    .pa-maps-compact [data-testid="stVerticalBlock"] > div {
+        gap: 0.35rem;
+    }
+    .pa-maps-player-slicer,
+    .st-key-maps_player_slicer {
+        max-width: 420px;
+        margin: 0 0 0.65rem 0;
+    }
+    .pa-maps-grid-row [data-testid="stImage"] img {
+        max-height: 220px;
+        object-fit: contain;
+    }
+    .pa-maps-compact [data-testid="stPyplot"] {
+        width: 100%;
+    }
+    .pa-maps-detail-panel {
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        margin-top: 0.15rem;
+    }
+    .pa-stats-filter {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.92fr) minmax(320px, 1.35fr) minmax(210px, 0.78fr);
+        gap: 0.75rem;
+        margin: 0.35rem 0 0.55rem 0;
+    }
+    .pa-stats-filter-inner {
+        min-width: 0;
+    }
+    .pa-stats-filter-inner [data-testid="stRadio"] > label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #8fa3bf;
+    }
+    @media (max-width: 1100px) {
+        .pa-stats-filter { grid-template-columns: 1fr; }
+    }
+    .pa-panels-row {
+        margin-top: 0.85rem;
+    }
+    .pa-panels-row [data-testid="stExpander"] {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .pa-panels-row [data-testid="stExpander"] summary {
+        color: #93c5fd;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }
+    .pa-layout {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.92fr) minmax(320px, 1.35fr) minmax(210px, 0.78fr);
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+    @media (max-width: 1100px) {
+        .pa-layout { grid-template-columns: 1fr; }
+        .pa-col { display: flex; flex-direction: column; }
+    }
+    .pa-col {
+        display: contents;
+        min-width: 0;
+    }
+    .pa-score-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        min-height: var(--pa-card-h);
+        height: auto;
+        overflow: visible;
+        box-sizing: border-box;
+    }
+    .pa-xp-profile-card {
+        display: flex;
+        flex-direction: column;
+        flex: 1 0 auto;
+        min-height: 0;
+        padding: 0.65rem 0.7rem 0.85rem;
+        margin-bottom: 0;
+        gap: 0.45rem;
+        overflow: visible;
+    }
+    .pa-xp-profile-title {
+        margin: 0;
+        color: #93c5fd;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        flex-shrink: 0;
+    }
+    .pa-pillars-card {
+        display: flex;
+        flex-direction: column;
+        padding: 0.75rem 0.7rem 0.7rem;
+        margin-bottom: 0;
+        min-height: var(--pa-card-h);
+        height: auto;
+        overflow: visible;
+        box-sizing: border-box;
+    }
+    .grade-card-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        width: 100%;
+    }
+    .grade-card-title-row .grade-card-title {
+        flex: 1;
+        min-width: 0;
+    }
+    .grade-card-title-row .rank-tip {
+        flex-shrink: 0;
+    }
+    .pa-minutes-inline-sub {
+        color: #64748b;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-left: 0.25rem;
+    }
+    .pa-identity-card {
+        padding: 0.9rem 1rem 0.8rem;
+        margin-bottom: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        height: var(--pa-card-h);
+        min-height: var(--pa-card-h);
+        max-height: var(--pa-card-h);
+        overflow: hidden;
+        box-sizing: border-box;
+    }
+    .pa-identity-header {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+    }
+    .pa-identity-photo-wrap {
+        flex-shrink: 0;
+        width: 74px;
+        height: 74px;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #334155;
+        background: #0f172a;
+    }
+    .pa-identity-photo {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .pa-identity-photo-placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        color: #475569;
+        font-size: 1.45rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+    }
+    .pa-identity-head-text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-width: 0;
+        flex: 1;
+    }
+    .pa-identity-top {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+    .pa-identity-title {
+        margin: 0;
+        color: #f8fafc;
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+    }
+    .pa-identity-meta {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.86rem;
+        line-height: 1.4;
+    }
+    .pa-identity-chip {
+        display: inline-flex;
+        align-self: flex-start;
+        align-items: center;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid #334155;
+        background: rgba(15, 23, 42, 0.72);
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        font-weight: 600;
+    }
+    .pa-archetype-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+        margin-top: 0.1rem;
+    }
+    .pa-archetype-tip {
+        position: relative;
+        display: inline-flex;
+    }
+    .pa-archetype-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.28rem 0.62rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    .pa-archetype-pill i {
+        font-size: 0.72rem;
+        opacity: 0.92;
+    }
+    .pa-archetype-build {
+        color: #bfdbfe;
+        background: rgba(37, 99, 235, 0.16);
+        border-color: rgba(96, 165, 250, 0.45);
+    }
+    .pa-archetype-vertical {
+        color: #fde68a;
+        background: rgba(217, 119, 6, 0.16);
+        border-color: rgba(245, 158, 11, 0.45);
+    }
+    .pa-archetype-carry {
+        color: #a7f3d0;
+        background: rgba(5, 150, 105, 0.16);
+        border-color: rgba(52, 211, 153, 0.45);
+    }
+    .pa-archetype-attack {
+        color: #e9d5ff;
+        background: rgba(124, 58, 237, 0.16);
+        border-color: rgba(167, 139, 250, 0.45);
+    }
+    .pa-archetype-link {
+        color: #cbd5e1;
+        background: rgba(71, 85, 105, 0.22);
+        border-color: rgba(148, 163, 184, 0.4);
+    }
+    .pa-archetype-reference {
+        color: #94a3b8;
+        background: rgba(51, 65, 85, 0.28);
+        border-color: rgba(100, 116, 139, 0.45);
+    }
+    .pa-archetype-elite {
+        color: #fde68a;
+        background: rgba(202, 138, 4, 0.18);
+        border-color: rgba(250, 204, 21, 0.5);
+    }
+    .pa-archetype-impacto {
+        color: #fdba74;
+        background: rgba(234, 88, 12, 0.16);
+        border-color: rgba(251, 146, 60, 0.45);
+    }
+    .pa-xp-profile-archetype-title {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-shrink: 0;
+        margin: 0 0 0.35rem;
+        padding-top: 0.05rem;
+    }
+    .pa-xp-profile-archetype-title .pa-archetype-pill {
+        font-size: 0.8rem;
+        padding: 0.34rem 0.78rem;
+    }
+    .pa-xp-profile-archetype-title .pa-archetype-tipbox {
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 14rem;
+        max-width: 18rem;
+        text-align: left;
+    }
+    .pa-xp-profile-archetype {
+        display: flex;
+        justify-content: center;
+        margin-top: 0.15rem;
+        padding-top: 0.2rem;
+        flex-shrink: 0;
+    }
+    .pa-xp-profile-archetype .pa-archetype-tipbox {
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 14rem;
+        max-width: 18rem;
+        text-align: left;
+    }
+    .pa-archetype-tipbox {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: calc(100% + 0.35rem);
+        z-index: 20;
+        min-width: 12rem;
+        max-width: 16rem;
+        padding: 0.45rem 0.55rem;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        font-weight: 500;
+        line-height: 1.35;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .pa-archetype-tip:hover .pa-archetype-tipbox,
+    .pa-archetype-tip:focus-within .pa-archetype-tipbox {
+        display: block;
+    }
+    .pa-compare-legend .pa-archetype-pill {
+        font-size: 0.64rem;
+        padding: 0.16rem 0.42rem;
+        margin-left: 0.25rem;
+        vertical-align: middle;
+    }
+    .pa-compare-legend .pa-archetype-tipbox {
+        min-width: 10rem;
+    }
+    .pa-identity-badges {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.4rem;
+    }
+    .pa-xp-achievement-row {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+    .pa-xp-achievement {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.32rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        border: 1px solid transparent;
+        white-space: nowrap;
+    }
+    .pa-xp-achievement i { font-size: 0.66rem; }
+    .pa-xp-achievement-impact {
+        color: #fcd34d;
+        background: rgba(250, 204, 21, 0.14);
+        border-color: rgba(250, 204, 21, 0.45);
+    }
+    .pa-xp-achievement-threat {
+        color: #fca5a5;
+        background: rgba(239, 68, 68, 0.14);
+        border-color: rgba(239, 68, 68, 0.45);
+    }
+    .pa-xp-achievement-consistency {
+        color: #7dd3fc;
+        background: rgba(56, 189, 248, 0.14);
+        border-color: rgba(56, 189, 248, 0.45);
+    }
+    .pa-identity-divider {
+        height: 1px;
+        background: #243049;
+        margin: 0.1rem 0;
+    }
+    .pa-section-label {
+        margin: 0;
+        color: #8fa3bf;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-participation-compact {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        flex: 0 0 auto;
+        min-height: 0;
+        overflow: hidden;
+    }
+    .pa-identity-card .pa-participation-compact {
+        gap: 0;
+        justify-content: flex-start;
+    }
+    .pa-identity-card .pa-part-row {
+        padding: 0.14rem 0;
+    }
+    .pa-identity-card .pa-part-label {
+        font-size: 0.76rem;
+    }
+    .pa-identity-card .pa-part-val {
+        font-size: 0.82rem;
+    }
+    .pa-identity-card .pa-section-label {
+        margin-bottom: 0.15rem;
+    }
+    .pa-part-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.75rem;
+        padding: 0.24rem 0;
+        border-bottom: 1px solid #243049;
+    }
+    .pa-part-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .pa-part-label {
+        color: #94a3b8;
+        font-size: 0.82rem;
+        min-width: 0;
+    }
+    .pa-part-val {
+        color: #f8fafc;
+        font-size: 0.9rem;
+        font-weight: 700;
+        text-align: right;
+        white-space: nowrap;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.1rem;
+    }
+    .pa-part-val .val-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .pa-pass-grade-card {
+        padding: 0.7rem 0.75rem 0.75rem;
+        margin-bottom: 0;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        overflow: visible;
+    }
+    .pa-pass-grade-head {
+        display: flex;
+        align-items: center;
+        gap: 0.42rem;
+    }
+    .pa-pass-grade-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.4rem;
+        height: 1.4rem;
+        border-radius: 7px;
+        font-size: 0.66rem;
+        color: #93c5fd;
+        background: rgba(59, 130, 246, 0.16);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .pa-pass-grade-title {
+        margin: 0;
+        color: #93c5fd;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-pass-grade-tier {
+        margin-left: auto;
+        padding: 0.16rem 0.46rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+    .pa-pass-grade-body {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.7rem;
+    }
+    .pa-pass-grade-value {
+        display: flex;
+        align-items: baseline;
+        gap: 0.18rem;
+        flex: 0 0 auto;
+    }
+    .pa-pass-grade-score {
+        font-size: 1.9rem;
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        text-shadow: 0 2px 10px rgba(2, 6, 23, 0.45);
+    }
+    .pa-pass-grade-score.pa-pass-grade-low-sample { opacity: 0.72; }
+    .pa-pass-grade-scale {
+        color: #64748b;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+    .pa-pass-grade-meter {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding-bottom: 0.1rem;
+    }
+    .pa-pass-grade-track {
+        position: relative;
+        height: 0.45rem;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #7f1d1d 0%, #b45309 24%, #ca8a04 42%, #65a30d 68%, #16a34a 100%);
+        box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.42);
+    }
+    /* Clips the dimming overlay to the rounded track; the marker stays outside it. */
+    .pa-pass-grade-shade {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        overflow: hidden;
+    }
+    /* Dims the portion of the scale the player has not reached. */
+    .pa-pass-grade-rest {
+        position: absolute;
+        top: 0;
+        right: 0;
+        height: 100%;
+        background: rgba(11, 17, 32, 0.78);
+    }
+    .pa-pass-grade-elite { border-color: rgba(74, 222, 128, 0.35); }
+    .pa-pass-grade-low { border-color: rgba(248, 113, 113, 0.3); }
+    .pa-pass-grade-marker {
+        position: absolute;
+        top: 50%;
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background: #f8fafc;
+        border: 2px solid #f8fafc;
+        box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9), 0 2px 6px rgba(2, 6, 23, 0.5);
+    }
+    .pa-pass-grade-axis {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 0.28rem;
+        color: #64748b;
+        font-size: 0.58rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+    }
+    .pa-pass-grade-foot {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-height: 0.9rem;
+    }
+    .pa-pass-grade-rank {
+        color: #7dd3fc;
+        font-size: 0.64rem;
+        font-weight: 600;
+    }
+    .pa-pass-grade-flag {
+        margin-left: auto;
+        color: #fbbf24;
+        font-size: 0.6rem;
+        font-weight: 600;
+        cursor: help;
+    }
+    .pa-pass-grade-drivers {
+        display: flex;
+        flex-direction: column;
+        gap: 0.22rem;
+        padding-top: 0.45rem;
+        border-top: 1px solid rgba(51, 65, 85, 0.55);
+    }
+    .pa-pass-grade-driver {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+    }
+    .pa-pass-grade-driver-name {
+        color: #cbd5e1;
+        font-size: 0.66rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .pa-pass-grade-driver-dots {
+        flex: 1;
+        height: 1px;
+        min-width: 0.6rem;
+        background: linear-gradient(90deg, rgba(100, 116, 139, 0.4), rgba(100, 116, 139, 0.1));
+    }
+    .pa-pass-grade-driver-val {
+        color: #e2e8f0;
+        font-size: 0.68rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .pa-pass-grade-driver-rank {
+        color: #7dd3fc;
+        font-size: 0.6rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .pa-rating-panel {
+        padding: 0.65rem 0.8rem;
+        margin-bottom: 0;
+        flex-shrink: 0;
+    }
+    .pa-rating-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr);
+        align-items: center;
+        gap: 0.7rem;
+    }
+    .pa-rating-divider {
+        width: 1px;
+        align-self: stretch;
+        background: #243049;
+        min-height: 3.25rem;
+    }
+    .pa-rating-block {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 0.32rem;
+        min-width: 0;
+    }
+    .pa-rating-block-label {
+        color: #8fa3bf;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-rating-block-score {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    .pa-rating-block-score .rating-box-wrap {
+        justify-content: center;
+    }
+    .pa-rating-block-score .rating-box {
+        min-width: 3.35rem;
+        font-size: 1.35rem !important;
+        font-weight: 800 !important;
+        padding: 0.38rem 0.7rem !important;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .pa-rating-block-overall .rating-box {
+        min-width: 3.85rem;
+        font-size: 1.55rem !important;
+        padding: 0.42rem 0.78rem !important;
+    }
+    .pa-rating-badges {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        margin-top: 0.1rem;
+    }
+    .pa-rating-badges .rating-badge-row {
+        justify-content: center;
+    }
+    .pa-col-score .radar-card {
+        margin-bottom: 0;
+        padding: 0.55rem 0.65rem 0.6rem;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+    .pa-col-score .radar-card .radar-card-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+    }
+    .pa-col-score .radar-card .rating-radar-wrap {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .pa-col-score .radar-card .rating-radar {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }
+    .pa-radar-legend {
+        display: flex;
+        justify-content: center;
+        gap: 0.85rem;
+        margin-top: 0.2rem;
+        font-size: 0.66rem;
+        font-weight: 600;
+        color: #94a3b8;
+        letter-spacing: 0.03em;
+    }
+    .pa-radar-legend-item::before {
+        content: "";
+        display: inline-block;
+        width: 16px;
+        height: 0;
+        margin-right: 0.3rem;
+        vertical-align: middle;
+        border-top-width: 2.5px;
+        border-top-style: solid;
+    }
+    .pa-radar-legend-pass::before {
+        border-top-color: #60a5fa;
+    }
+    .pa-radar-legend-carry::before {
+        border-top-color: #34d399;
+    }
+    .pa-radar-legend-player::before {
+        border-top-color: #c4b5fd;
+    }
+    .pa-radar-legend-archetype::before {
+        border-top-color: rgba(148, 163, 184, 0.45);
+        background: rgba(148, 163, 184, 0.12);
+        height: 8px;
+        border-top-width: 1.5px;
+    }
+    .pa-origin-heatmap-wrap {
+        flex: 1;
+        min-height: 250px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.15rem;
+        overflow: hidden;
+    }
+    .pa-origin-heatmap {
+        width: 108%;
+        max-width: 108%;
+        max-height: 100%;
+        object-fit: contain;
+        border-radius: 8px;
+        display: block;
+    }
+    .pa-left-card-body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        gap: 0.25rem;
+    }
+    .pa-pillars-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 0.34rem;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    .pa-pillar-group-label {
+        margin: 0 0 0.55rem 0;
+        color: #dbeafe;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .pa-pillar-group-label:first-child {
+        margin-top: 0;
+    }
+    .pa-pillar-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .pa-subgroup-label {
+        margin: 0.35rem 0 0.1rem 0;
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+    }
+    .pa-pillar-group-empty {
+        min-height: 2.5rem;
+    }
+    .pa-archetype-panel,
+    .pa-indices-panel {
+        padding: 0.35rem 0.55rem 0.45rem;
+    }
+    .pa-xp-profile-panel {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        gap: 0.35rem;
+    }
+    .pa-xp-radar-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        padding: 0.1rem 0 0.15rem;
+    }
+    .pa-xp-radar-img {
+        width: 100%;
+        max-width: 100%;
+        height: 100%;
+        min-height: 285px;
+        max-height: 375px;
+        object-fit: contain;
+        display: block;
+    }
+    .pa-xp-profile-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        padding-top: 0.1rem;
+        flex: 1;
+        justify-content: flex-start;
+        min-height: 0;
+    }
+    .pa-xp-profile-eligibility-note {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.78rem;
+        line-height: 1.45;
+    }
+    .pa-xp-profile-bars-ineligible {
+        justify-content: center;
+    }
+    .pa-xp-pillar {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        padding: 0.6rem 0.6rem 0.65rem;
+        border-radius: 12px;
+        background: linear-gradient(160deg, rgba(21, 27, 43, 0.55) 0%, rgba(15, 23, 42, 0.35) 100%);
+        border: 1px solid rgba(51, 65, 85, 0.45);
+    }
+    .pa-xp-pillar-head {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .pa-xp-pillar-icon {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.65rem;
+        height: 1.65rem;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        color: #c4b5fd;
+        background: rgba(168, 85, 247, 0.14);
+        border: 1px solid rgba(168, 85, 247, 0.32);
+    }
+    .pa-xp-pillar-label {
+        flex: 1;
+        min-width: 0;
+        color: #f1f5f9;
+        font-size: 0.88rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    .pa-xp-pillar-weight {
+        flex: 0 0 auto;
+        padding: 0.1rem 0.42rem;
+        border-radius: 999px;
+        color: #93a4bc;
+        font-size: 0.64rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        background: rgba(51, 65, 85, 0.4);
+        border: 1px solid rgba(100, 116, 139, 0.3);
+    }
+    .pa-xp-pillar-bar {
+        cursor: help;
+        outline: none;
+        transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+    .pa-xp-pillar-bar:hover,
+    .pa-xp-pillar-bar:focus-visible {
+        border-color: rgba(147, 197, 253, 0.55);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.04),
+            0 6px 18px rgba(2, 6, 23, 0.32);
+    }
+    .pa-xp-pillar-bar:hover .pa-xp-gradient-bar-tipbox,
+    .pa-xp-pillar-bar:focus-visible .pa-xp-gradient-bar-tipbox,
+    .pa-xp-pillar-bar:focus-within .pa-xp-gradient-bar-tipbox {
+        opacity: 1;
+        visibility: visible;
+    }
+    /* The first pillar has no room above, so its tooltip opens downwards. */
+    .pa-xp-pillar:first-child .pa-xp-gradient-bar-tipbox {
+        top: calc(100% + 8px);
+        bottom: auto;
+    }
+    .pa-xp-index-wrap {
+        margin-top: 0.7rem;
+        padding-top: 0.6rem;
+        border-top: 1px solid rgba(51, 65, 85, 0.55);
+    }
+    .pa-xp-index-title {
+        margin: 0 0 0.42rem 0;
+        color: #93c5fd;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-xp-index-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+    }
+    .pa-xp-index-row {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.42rem 0.55rem;
+        border-radius: 9px;
+        border: 1px solid rgba(51, 65, 85, 0.45);
+        background: rgba(15, 23, 42, 0.45);
+        cursor: help;
+        transition: border-color 0.14s ease, background 0.14s ease;
+    }
+    .pa-xp-index-row:hover {
+        border-color: rgba(100, 116, 139, 0.55);
+        background: rgba(15, 23, 42, 0.62);
+    }
+    .pa-xp-index-row-icon {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.4rem;
+        height: 1.4rem;
+        border-radius: 7px;
+        font-size: 0.66rem;
+        color: #94a3b8;
+        background: rgba(51, 65, 85, 0.35);
+    }
+    .pa-xp-index-row-name {
+        color: #e2e8f0;
+        font-size: 0.74rem;
+        font-weight: 700;
+        flex: 0 0 auto;
+        min-width: 5.4rem;
+    }
+    .pa-xp-index-row-sep {
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, rgba(100, 116, 139, 0.45), rgba(100, 116, 139, 0.12));
+        min-width: 0.8rem;
+    }
+    .pa-xp-index-row-val {
+        flex: 0 0 auto;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-align: right;
+        white-space: nowrap;
+    }
+    .pa-xp-index-row-below .pa-xp-index-row-val { color: #fb923c; }
+    .pa-xp-index-row-mid .pa-xp-index-row-val { color: #facc15; }
+    .pa-xp-index-row-above .pa-xp-index-row-val { color: #4ade80; }
+    .pa-xp-index-row-earned {
+        border-color: rgba(74, 222, 128, 0.45);
+        background: linear-gradient(90deg, rgba(74, 222, 128, 0.12) 0%, rgba(15, 23, 42, 0.45) 100%);
+    }
+    .pa-xp-index-row-earned .pa-xp-index-row-val { color: #4ade80; }
+    .pa-xp-index-row-earned .pa-xp-index-row-icon {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.18);
+    }
+    .pa-xp-index-row-locked .pa-xp-index-row-val { color: #64748b; }
+    .pa-xp-index-row-locked { opacity: 0.75; }
+    .pa-xp-index-row-hastip { position: relative; }
+    .pa-xp-index-tipbox {
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        min-width: 13rem;
+        max-width: 17rem;
+        padding: 0.5rem 0.6rem;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: rgba(15, 23, 42, 0.97);
+        color: #e2e8f0;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        text-align: left;
+        white-space: normal;
+        box-shadow: 0 10px 24px rgba(2, 6, 23, 0.45);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease, visibility 0.14s ease;
+        z-index: 30;
+    }
+    .pa-xp-index-row-hastip:hover .pa-xp-index-tipbox,
+    .pa-xp-index-row-hastip:focus-within .pa-xp-index-tipbox {
+        opacity: 1;
+        visibility: visible;
+    }
+    /* Last row sits at the card foot, so its tooltip drops down instead of
+       covering an expanded chart above it. */
+    .pa-xp-index-list > .pa-xp-index-row-hastip:last-child .pa-xp-index-tipbox {
+        top: calc(100% + 8px);
+        bottom: auto;
+    }
+    .pa-xp-index-tip-title {
+        display: block;
+        margin-bottom: 0.28rem;
+        color: #93c5fd;
+        font-size: 0.64rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-xp-index-tip-summary {
+        display: block;
+        margin-bottom: 0.4rem;
+        color: #94a3b8;
+        font-size: 0.68rem;
+        font-weight: 500;
+        line-height: 1.3;
+    }
+    .pa-xp-index-tip-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-top: 0.22rem;
+    }
+    .pa-xp-index-tip-metric {
+        color: #e2e8f0;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+    .pa-xp-index-tip-rank {
+        color: #7dd3fc;
+        font-size: 0.64rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .pa-xp-index-tip-chart {
+        display: block;
+        margin-top: 0.42rem;
+        padding-top: 0.38rem;
+        border-top: 1px solid rgba(51, 65, 85, 0.55);
+    }
+    .pa-round-chart-wrap-compact { width: 100%; }
+    .pa-round-chart-compact {
+        display: block;
+        width: 100%;
+        height: 52px;
+        overflow: visible;
+    }
+    .pa-round-chart-wrap-compact .pa-round-chart-legend {
+        margin-top: 0.2rem;
+    }
+    .pa-xp-index-details {
+        border-radius: 9px;
+    }
+    .pa-xp-index-details > summary {
+        list-style: none;
+        cursor: pointer;
+    }
+    .pa-xp-index-details > summary::-webkit-details-marker { display: none; }
+    .pa-xp-index-details > summary::marker { content: ""; }
+    .pa-xp-index-arrow {
+        margin-left: 0.4rem;
+        color: #94a3b8;
+        font-size: 0.6rem;
+        transition: transform 0.18s ease;
+    }
+    .pa-xp-index-details[open] .pa-xp-index-arrow { transform: rotate(90deg); }
+    .pa-xp-index-details-body {
+        margin-top: 0.32rem;
+        padding: 0.5rem 0.55rem 0.55rem;
+        border-radius: 9px;
+        border: 1px solid rgba(51, 65, 85, 0.5);
+        background: rgba(9, 14, 27, 0.6);
+    }
+    .pa-round-chart-title {
+        margin: 0 0 0.35rem;
+        color: #93c5fd;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-round-chart-wrap { width: 100%; }
+    .pa-round-chart {
+        display: block;
+        width: 100%;
+        height: 88px;
+        overflow: visible;
+    }
+    .pa-round-chart-area {
+        fill: rgba(56, 189, 248, 0.16);
+        stroke: none;
+    }
+    .pa-round-chart-line {
+        fill: none;
+        stroke: #38bdf8;
+        stroke-width: 1.6;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+    }
+    .pa-round-chart-mean {
+        stroke: rgba(148, 163, 184, 0.6);
+        stroke-width: 1;
+        stroke-dasharray: 3 3;
+        vector-effect: non-scaling-stroke;
+    }
+    .pa-round-chart-dot {
+        fill: #0f172a;
+        stroke: #38bdf8;
+        stroke-width: 1.2;
+        vector-effect: non-scaling-stroke;
+        cursor: help;
+    }
+    .pa-round-chart-dot-peak {
+        fill: #4ade80;
+        stroke: #4ade80;
+    }
+    .pa-round-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-top: 0.3rem;
+        color: #94a3b8;
+        font-size: 0.6rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+    .pa-round-chart-legend-mean { color: #cbd5e1; }
+    .pa-round-chart-empty {
+        margin: 0;
+        color: #64748b;
+        font-size: 0.66rem;
+        font-style: italic;
+    }
+    .pa-pass-mix-card {
+        padding: 0.65rem 0.7rem 0.7rem;
+        margin-bottom: 0;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        overflow: visible;
+    }
+    .pa-pass-mix-head {
+        display: flex;
+        align-items: center;
+        gap: 0.42rem;
+    }
+    .pa-pass-mix-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.4rem;
+        height: 1.4rem;
+        border-radius: 7px;
+        font-size: 0.66rem;
+        color: #93c5fd;
+        background: rgba(59, 130, 246, 0.16);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .pa-pass-mix-title {
+        color: #93c5fd;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-pass-mix-delta {
+        margin-left: auto;
+        padding: 0.14rem 0.44rem;
+        border-radius: 999px;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        cursor: help;
+    }
+    .pa-pass-mix-delta-up {
+        color: #fcd34d;
+        background: rgba(250, 204, 21, 0.14);
+        border: 1px solid rgba(250, 204, 21, 0.4);
+    }
+    .pa-pass-mix-delta-down {
+        color: #7dd3fc;
+        background: rgba(56, 189, 248, 0.14);
+        border: 1px solid rgba(56, 189, 248, 0.38);
+    }
+    .pa-pass-mix-track {
+        position: relative;
+        height: 0.68rem;
+        border-radius: 999px;
+        overflow: visible;
+        background: linear-gradient(
+            90deg,
+            rgba(56, 189, 248, 0.42) 0%,
+            rgba(56, 189, 248, 0.14) 42%,
+            rgba(251, 191, 36, 0.14) 58%,
+            rgba(251, 191, 36, 0.42) 100%
+        );
+        border: 1px solid rgba(51, 65, 85, 0.7);
+        box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.4);
+    }
+    .pa-pass-mix-center {
+        position: absolute;
+        top: -0.18rem;
+        bottom: -0.18rem;
+        left: 50%;
+        width: 2px;
+        transform: translateX(-50%);
+        border-radius: 999px;
+        background: rgba(248, 250, 252, 0.92);
+        box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9);
+        cursor: help;
+        z-index: 1;
+    }
+    .pa-pass-mix-marker {
+        position: absolute;
+        top: 50%;
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 999px;
+        transform: translate(-50%, -50%);
+        background: #f8fafc;
+        border: 2px solid #0f172a;
+        box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.55);
+        cursor: help;
+        z-index: 2;
+    }
+    .pa-pass-mix-axis {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        color: #94a3b8;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+    .pa-pass-mix-axis-short { color: #7dd3fc; }
+    .pa-pass-mix-axis-long { color: #fcd34d; }
+    .pa-pass-mix-legend {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        color: #94a3b8;
+        font-size: 0.62rem;
+        font-weight: 600;
+    }
+    .pa-pass-mix-legend-item strong { color: #e2e8f0; }
+    .pa-pass-mix-legend-short { color: #7dd3fc; }
+    .pa-pass-mix-legend-long { color: #fcd34d; }
+    .pa-pass-mix-foot {
+        margin: 0;
+        color: #64748b;
+        font-size: 0.6rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+    .pa-xp-gradient-bar-shell {
+        position: relative;
+        padding: 0.36rem 0.45rem 0.4rem;
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.72) 0%, rgba(10, 16, 30, 0.9) 100%);
+        border: 1px solid rgba(51, 65, 85, 0.75);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.04),
+            0 6px 14px rgba(2, 6, 23, 0.22);
+    }
+    .pa-xp-gradient-bar-track {
+        position: relative;
+        width: 100%;
+        height: 17px;
+        border-radius: 999px;
+        overflow: visible;
+        background: linear-gradient(
+            90deg,
+            #f1f5f9 0%,
+            #cbd5e1 14%,
+            #fde68a 38%,
+            #fbbf24 56%,
+            #fb923c 74%,
+            #ef4444 100%
+        );
+        box-shadow:
+            inset 0 2px 4px rgba(15, 23, 42, 0.28),
+            inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+    }
+    .pa-xp-gradient-bar-track::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.22) 0%,
+            rgba(255, 255, 255, 0.03) 42%,
+            rgba(0, 0, 0, 0.12) 100%
+        );
+        pointer-events: none;
+    }
+    /* Clips only the blurred glow to the rounded track; tooltip escapes freely. */
+    .pa-xp-gradient-bar-clip {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        overflow: hidden;
+        pointer-events: none;
+        z-index: 1;
+    }
+    .pa-xp-gradient-bar-track.pa-xp-gradient-bar-empty {
+        background: linear-gradient(90deg, #334155 0%, #475569 100%);
+    }
+    .pa-xp-gradient-bar-glow {
+        position: absolute;
+        top: 50%;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        filter: blur(10px);
+        opacity: 0.55;
+        z-index: 1;
+    }
+    .pa-xp-gradient-bar-tier-cool .pa-xp-gradient-bar-glow {
+        background: rgba(148, 163, 184, 0.75);
+    }
+    .pa-xp-gradient-bar-tier-warm .pa-xp-gradient-bar-glow {
+        background: rgba(251, 191, 36, 0.85);
+    }
+    .pa-xp-gradient-bar-tier-hot .pa-xp-gradient-bar-glow {
+        background: rgba(239, 68, 68, 0.9);
+    }
+    .pa-xp-gradient-bar-marker {
+        position: absolute;
+        top: 50%;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle at 35% 30%, #ffffff 0%, #e2e8f0 58%, #cbd5e1 100%);
+        border: 2px solid rgba(15, 23, 42, 0.92);
+        box-shadow:
+            0 0 0 1px rgba(255, 255, 255, 0.42),
+            0 2px 8px rgba(2, 6, 23, 0.45);
+        pointer-events: none;
+        z-index: 3;
+    }
+    .pa-xp-gradient-bar-tier-warm .pa-xp-gradient-bar-marker {
+        box-shadow:
+            0 0 0 1px rgba(255, 255, 255, 0.42),
+            0 0 12px rgba(251, 191, 36, 0.55),
+            0 2px 8px rgba(2, 6, 23, 0.45);
+    }
+    .pa-xp-gradient-bar-tier-hot .pa-xp-gradient-bar-marker {
+        box-shadow:
+            0 0 0 1px rgba(255, 255, 255, 0.42),
+            0 0 14px rgba(239, 68, 68, 0.62),
+            0 2px 8px rgba(2, 6, 23, 0.45);
+    }
+    .pa-xp-gradient-bar-marker-only {
+        position: absolute;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 5;
+        display: inline-flex;
+        pointer-events: none;
+    }
+    .pa-xp-gradient-bar-tipbox {
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        min-width: 13rem;
+        max-width: 17rem;
+        padding: 0.5rem 0.6rem;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: rgba(15, 23, 42, 0.96);
+        color: #e2e8f0;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        white-space: normal;
+        box-shadow: 0 10px 24px rgba(2, 6, 23, 0.45);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease, visibility 0.14s ease;
+        z-index: 20;
+    }
+    .pa-xp-gradient-bar-tip-title {
+        display: block;
+        margin-bottom: 0.28rem;
+        color: #93c5fd;
+        font-size: 0.64rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-xp-gradient-bar-tip-summary {
+        display: block;
+        margin-bottom: 0.4rem;
+        color: #94a3b8;
+        font-size: 0.68rem;
+        font-weight: 500;
+        line-height: 1.3;
+    }
+    .pa-xp-gradient-bar-tip-line {
+        display: flex;
+        flex-direction: column;
+        margin-top: 0.28rem;
+    }
+    .pa-xp-gradient-bar-tip-metric {
+        color: #e2e8f0;
+        font-size: 0.72rem;
+        font-weight: 600;
+    }
+    .pa-xp-gradient-bar-tip-rank {
+        color: #7dd3fc;
+        font-size: 0.66rem;
+        font-weight: 600;
+    }
+    .pa-xp-gradient-bar-ticks {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 0.34rem;
+        padding: 0 0.12rem;
+        pointer-events: none;
+    }
+    .pa-xp-gradient-bar-ticks span {
+        width: 1px;
+        height: 5px;
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.55);
+    }
+    .pa-indices-panel .metric-line:last-child {
+        border-bottom: none;
+    }
+    .pa-placeholder-note {
+        margin: 0.15rem 0 0;
+        color: #64748b;
+        font-size: 0.78rem;
+        font-style: italic;
+    }
+    .pa-xp-section-panel {
+        margin-bottom: 0.75rem;
+        padding: 0.55rem 0.6rem 0.6rem;
+        border: 1px solid rgba(59, 130, 246, 0.14);
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.55) 0%, rgba(15, 23, 42, 0.2) 100%);
+    }
+    .pa-xp-section-panel:last-child {
+        margin-bottom: 0;
+    }
+    .pa-xp-section-title {
+        color: #93c5fd;
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.5rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid rgba(59, 130, 246, 0.22);
+    }
+    .pa-xp-section-body .metric-line {
+        padding: 0.46rem 0;
+        font-size: 0.87rem;
+    }
+    .pa-xp-section-body .metric-line .stat-val {
+        font-size: 0.94rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .pa-xp-section-body .metric-tipbox {
+        min-width: 220px;
+        max-width: 300px;
+    }
+    .pa-xp-section-body .metric-line:last-child {
+        border-bottom: none;
+    }
+    .pa-top-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.05rem;
+        height: 1.05rem;
+        padding: 0;
+        border-radius: 999px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    .pa-top-badge i {
+        font-size: 0.5rem;
+    }
+    .pa-top-badge-gold {
+        color: #422006;
+        background: linear-gradient(135deg, #fde68a 0%, #f59e0b 100%);
+        border: 1px solid rgba(251, 191, 36, 0.65);
+        box-shadow: 0 1px 6px rgba(245, 158, 11, 0.35);
+    }
+    .pa-top-badge-silver {
+        color: #1e293b;
+        background: linear-gradient(135deg, #f1f5f9 0%, #94a3b8 100%);
+        border: 1px solid rgba(148, 163, 184, 0.65);
+        box-shadow: 0 1px 6px rgba(148, 163, 184, 0.35);
+    }
+    .pa-top-badge-bronze {
+        color: #431407;
+        background: linear-gradient(135deg, #fed7aa 0%, #c2410c 100%);
+        border: 1px solid rgba(234, 88, 12, 0.55);
+        box-shadow: 0 1px 6px rgba(234, 88, 12, 0.28);
+    }
+    .pa-regular-stat-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        cursor: help;
+    }
+    .pa-regular-stat-tipbox {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 8px);
+        min-width: 11rem;
+        max-width: 15rem;
+        padding: 0.5rem 0.6rem;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: rgba(15, 23, 42, 0.96);
+        color: #e2e8f0;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        white-space: normal;
+        box-shadow: 0 10px 24px rgba(2, 6, 23, 0.45);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease, visibility 0.14s ease;
+        z-index: 30;
+        text-align: left;
+    }
+    .pa-regular-stat-tip:hover .pa-regular-stat-tipbox,
+    .pa-regular-stat-tip:focus-within .pa-regular-stat-tipbox {
+        opacity: 1;
+        visibility: visible;
+    }
+    .pa-regular-stat-tip-title {
+        display: block;
+        margin-bottom: 0.22rem;
+        color: #93c5fd;
+        font-size: 0.64rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .pa-regular-stat-tip-value {
+        display: block;
+        color: #f8fafc;
+        font-size: 0.86rem;
+        font-weight: 700;
+    }
+    .pa-regular-stat-tip-rank {
+        display: block;
+        margin-top: 0.28rem;
+        color: #94a3b8;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+    .special-stat-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin-top: 0.35rem;
+        padding: 0.22rem 0.55rem;
+        border-radius: 8px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        color: #e9d5ff;
+        background: linear-gradient(135deg, rgba(124, 58, 237, 0.22) 0%, rgba(139, 92, 246, 0.14) 100%);
+        border: 1px solid rgba(167, 139, 250, 0.5);
+        box-shadow: 0 1px 6px rgba(124, 58, 237, 0.18);
+    }
+    .special-stat-tag i {
+        font-size: 0.66rem;
+        opacity: 0.9;
+    }
+    .pa-pillars-stack .grade-accordion {
+        margin-bottom: 0;
+    }
+    .pa-pillars-stack .grade-accordion summary {
+        padding: 0.5rem 0.6rem;
+    }
+    .pa-pillars-stack .grade-card-title {
+        font-size: 0.8rem;
+        line-height: 1.2;
+    }
+    .pa-pillars-stack .grade-card-rank {
+        margin-top: 0.12rem;
+        font-size: 0.68rem;
+    }
+    .pa-pillars-stack .section-rating-pill {
+        font-size: 0.76rem;
+        min-width: 44px;
+        padding: 3px 8px;
+    }
+    .pa-panel {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.15rem 0.35rem 0.35rem;
+        margin-top: 0.85rem;
+    }
+    .pa-panel-title {
+        color: #93c5fd;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.75rem 0.75rem 0.35rem;
+    }
+    .pa-similar-wrap { margin-top: 0.85rem; }
+    .pa-similar-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.85rem 0.95rem 0.95rem;
+        margin-top: 0.45rem;
+    }
+    .pa-similar-caption {
+        color: #94a3b8;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        margin: 0 0 0.65rem 0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.title(f"{APP_NAME} · {APP_LEAGUE}")
+
+RATING_COLUMNS = ["Player", "Team", "Rating"]
+RATING_COLUMNS_OVERALL = ["Player", "Team", "Overall", "Pass", "Carry"]
+SELECTBOX_KEY = "map_player_select"
+
+
+def _call_build_analytics(
+    cache_version: int,
+    tier_model: str,
+    classification_model: str,
+    xt_surface_mode: str,
+):
+    sig = inspect.signature(build_analytics)
+    params = sig.parameters
+    kwargs: dict = {}
+    if "tier_model" in params:
+        kwargs["tier_model"] = tier_model
+    if "classification_model" in params:
+        kwargs["classification_model"] = classification_model
+    if "xt_surface_mode" in params:
+        kwargs["xt_surface_mode"] = xt_surface_mode
+    if kwargs:
+        return build_analytics(cache_version, **kwargs)
+    if "impact_model" in params:
+        return build_analytics(cache_version, impact_model=tier_model)
+    return build_analytics(cache_version)
+
+
+def _call_load_passes_grouped(
+    cache_version: int,
+    tier_model: str,
+    classification_model: str,
+    xt_surface_mode: str,
+):
+    sig = inspect.signature(load_passes_grouped)
+    params = sig.parameters
+    kwargs: dict = {}
+    if "tier_model" in params:
+        kwargs["tier_model"] = tier_model
+    if "classification_model" in params:
+        kwargs["classification_model"] = classification_model
+    if "xt_surface_mode" in params:
+        kwargs["xt_surface_mode"] = xt_surface_mode
+    if kwargs:
+        return load_passes_grouped(cache_version, **kwargs)
+    if "impact_model" in params:
+        return load_passes_grouped(cache_version, impact_model=tier_model)
+    return load_passes_grouped(cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_analytics(
+    _cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
+):
+    return _call_build_analytics(
+        _cache_version,
+        normalize_tier_model(tier_model),
+        normalize_classification_model(classification_model),
+        normalize_xt_surface_mode(xt_surface_mode),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_passes(
+    _cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
+):
+    return _call_load_passes_grouped(
+        _cache_version,
+        normalize_tier_model(tier_model),
+        normalize_classification_model(classification_model),
+        normalize_xt_surface_mode(xt_surface_mode),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_passes(_cache_version: int = DATA_CACHE_VERSION):
+    if not hasattr(pe, "load_serie_a_passes_grouped"):
+        return {}
+    return pe.load_serie_a_passes_grouped(
+        _cache_version,
+        tier_model=FIXED_TIER_MODEL,
+        classification_model=FIXED_CLASSIFICATION_MODEL,
+        xt_surface_mode=FIXED_XT_SURFACE_MODE,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_players(_cache_version: int = DATA_CACHE_VERSION):
+    if not hasattr(pe, "build_serie_a_players"):
+        return []
+    return pe.build_serie_a_players(
+        _cache_version,
+        tier_model=FIXED_TIER_MODEL,
+        classification_model=FIXED_CLASSIFICATION_MODEL,
+        xt_surface_mode=FIXED_XT_SURFACE_MODE,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_carry_players(_cache_version: int = CARRIES_DATA_CACHE_VERSION):
+    if not hasattr(ce, "build_serie_a_carry_players"):
+        return []
+    return ce.build_serie_a_carry_players(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_carries(_cache_version: int = CARRIES_DATA_CACHE_VERSION):
+    if not hasattr(ce, "load_serie_a_carries_grouped"):
+        return {}
+    return ce.load_serie_a_carries_grouped(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_carries_analytics(_cache_version: int = CARRIES_DATA_CACHE_VERSION):
+    return ce_build_analytics(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_carries_grouped(_cache_version: int = CARRIES_DATA_CACHE_VERSION):
+    return ce_load_carries_grouped(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_dribbles_grouped(_cache_version: int = CARRIES_DATA_CACHE_VERSION):
+    return ce_load_dribbles_grouped(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_xp_analytics(_cache_version: int = XP_DATA_CACHE_VERSION):
+    return xe.build_xp_analytics(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_xp_passes(_cache_version: int = XP_DATA_CACHE_VERSION):
+    return xe.load_xp_passes_grouped(_cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_ratings_bundle(
+    _pass_cache: int = DATA_CACHE_VERSION,
+    _carry_cache: int = CARRIES_DATA_CACHE_VERSION,
+):
+    """Compute pass, carry and progression ratings once per cache version."""
+    _, all_players = load_analytics()
+    _, carries_players = load_carries_analytics()
+    passes_by_player = load_passes()
+    carries_by_player = load_carries_grouped()
+    all_players = mo.apply_midfield_position_groups(all_players, passes_by_player, carries_by_player)
+    carries_players = mo.apply_midfield_position_groups(carries_players, passes_by_player, carries_by_player)
+    rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
+    carry_rated, carries_by_id, carries_pool_by_position = ce_compute_pass_ratings(carries_players)
+    progression_rated, progression_by_id, progression_pool_by_position = pg_compute_progression_ratings(
+        all_players,
+        carries_players,
+        pass_by_id=players_by_id,
+        carry_by_id=carries_by_id,
+    )
+    return (
+        rated,
+        players_by_id,
+        pool_by_position,
+        carry_rated,
+        carries_by_id,
+        carries_pool_by_position,
+        progression_rated,
+        progression_by_id,
+        progression_pool_by_position,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_core_data(
+    _pass_cache: int = DATA_CACHE_VERSION,
+    _carry_cache: int = CARRIES_DATA_CACHE_VERSION,
+):
+    """Passes and carries event data used by dashboard maps."""
+    _, all_players = load_analytics()
+    _, carries_players = load_carries_analytics()
+    passes_by_player = load_passes()
+    carries_by_player = load_carries_grouped()
+    dribbles_by_player = load_dribbles_grouped()
+    all_players = mo.apply_midfield_position_groups(all_players, passes_by_player, carries_by_player)
+    carries_players = mo.apply_midfield_position_groups(carries_players, passes_by_player, carries_by_player)
+    return all_players, carries_players, passes_by_player, carries_by_player, dribbles_by_player
+
+
+def _call_load_european_passes_grouped(
+    cache_version: int,
+    tier_model: str,
+    classification_model: str,
+    xt_surface_mode: str,
+):
+    sig = inspect.signature(pe.load_european_league_passes_grouped)
+    params = sig.parameters
+    kwargs: dict = {}
+    if "tier_model" in params:
+        kwargs["tier_model"] = tier_model
+    if "classification_model" in params:
+        kwargs["classification_model"] = classification_model
+    if "xt_surface_mode" in params:
+        kwargs["xt_surface_mode"] = xt_surface_mode
+    if kwargs:
+        return pe.load_european_league_passes_grouped(cache_version, **kwargs)
+    return pe.load_european_league_passes_grouped(cache_version)
+
+
+@st.cache_data(show_spinner=False)
+def load_player_analysis_passes(
+    _cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
+):
+    return _call_load_european_passes_grouped(
+        _cache_version,
+        normalize_tier_model(tier_model),
+        normalize_classification_model(classification_model),
+        normalize_xt_surface_mode(xt_surface_mode),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_player_analysis_players(
+    _cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
+):
+    return pe.build_european_league_midfielders(
+        _cache_version,
+        tier_model=normalize_tier_model(tier_model),
+        classification_model=normalize_classification_model(classification_model),
+        xt_surface_mode=normalize_xt_surface_mode(xt_surface_mode),
+    )
+
+
+@st.cache_data(show_spinner="Loading European midfielders…")
+def _load_european_player_analysis_bundle(
+    _pass_cache: int = DATA_CACHE_VERSION,
+    _xp_cache: int = XP_DATA_CACHE_VERSION,
+    _carry_cache: int = CARRIES_DATA_CACHE_VERSION,
+):
+    """Single cached load for Player Analysis (European-league midfielders)."""
+    analysis_players = pe.build_european_league_midfielders(_pass_cache)
+    passes_by_player = load_player_analysis_passes(_pass_cache)
+    empty_carries: dict[str, pd.DataFrame] = {}
+    analysis_players = mo.apply_midfield_position_groups(
+        analysis_players,
+        passes_by_player,
+        empty_carries,
+    )
+    _, players_by_id, pool_by_position = compute_pass_ratings(analysis_players)
+    carries_by_id: dict[str, dict] = {}
+    carries_pool_by_position: dict[str, list[dict]] = {}
+    _, progression_by_id, progression_pool_by_position = pg_compute_progression_ratings(
+        analysis_players,
+        [],
+        pass_by_id=players_by_id,
+        carry_by_id=carries_by_id,
+    )
+    _, xp_players = xe.build_european_league_xp_analytics(_xp_cache)
+
+    origin_by_id = {
+        str(p["player_id"]): {
+            "position_group": p.get("position_group"),
+            "midfield_offensive_origin_pct": p.get("midfield_offensive_origin_pct"),
+            "midfield_origin_profile": p.get("midfield_origin_profile"),
+            "league": p.get("league"),
+            "league_source": p.get("league_source"),
+        }
+        for p in analysis_players
+    }
+    for player in analysis_players:
+        pid = str(player["player_id"])
+        player["age"] = pp.read_cached_age(pid)
+    for xp_profile in xp_players:
+        pid = str(xp_profile["player_id"])
+        xp_profile["age"] = pp.read_cached_age(pid)
+        origin = origin_by_id.get(pid)
+        if origin:
+            xp_profile.setdefault("league", origin.get("league"))
+            xp_profile.setdefault("league_source", origin.get("league_source"))
+            xp_profile["position_group"] = origin.get("position_group") or xp_profile.get("position_group")
+            xp_profile["midfield_offensive_origin_pct"] = origin.get("midfield_offensive_origin_pct")
+            xp_profile["midfield_origin_profile"] = origin.get("midfield_origin_profile")
+    xe.refresh_xp_midfield_origin_rankings(xp_players)
+    xp_by_id = {str(p["player_id"]): p for p in xp_players}
+    for prof in progression_by_id.values():
+        pid = str(prof.get("player_id"))
+        prof["age"] = pp.read_cached_age(pid)
+        origin = origin_by_id.get(pid)
+        if origin:
+            prof.setdefault("league", origin.get("league"))
+            prof.setdefault("league_source", origin.get("league_source"))
+    return (
+        analysis_players,
+        passes_by_player,
+        progression_by_id,
+        players_by_id,
+        carries_by_id,
+        progression_pool_by_position,
+        pool_by_position,
+        carries_pool_by_position,
+        xp_by_id,
+    )
+
+
+@st.cache_data(show_spinner=f"Loading {TARGET_PLAYER_NAME} and European benchmarks…")
+def load_player_analysis_bundle(
+    _pass_cache: int = DATA_CACHE_VERSION,
+    _xp_cache: int = XP_DATA_CACHE_VERSION,
+    _carry_cache: int = CARRIES_DATA_CACHE_VERSION,
+):
+    bundle = _load_european_player_analysis_bundle(_pass_cache, _xp_cache, _carry_cache)
+    return ke.inject_target_into_bundle(
+        bundle,
+        tier_model=FIXED_TIER_MODEL,
+        classification_model=FIXED_CLASSIFICATION_MODEL,
+        xt_surface_mode=FIXED_XT_SURFACE_MODE,
+    )
+
+
+PLAYER_ANALYSIS_BUNDLE_KEY = "player_analysis_bundle"
+
+
+def _player_analysis_bundle() -> tuple:
+    if PLAYER_ANALYSIS_BUNDLE_KEY not in st.session_state:
+        st.session_state[PLAYER_ANALYSIS_BUNDLE_KEY] = load_player_analysis_bundle()
+    return st.session_state[PLAYER_ANALYSIS_BUNDLE_KEY]
+
+
+def _norm(s: str) -> str:
+    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
+
+
+def rank_color(rank: int, total: int) -> str:
+    """Score-based gradient: 9 green → 6 yellow → 3 red."""
+    if total <= 0:
+        return score_display_color(6.0)
+    effective_rank = min(max(rank, 1), total)
+    return score_display_color(rank_to_display_score(effective_rank, total))
+
+
+def _rank_bar_html(rank: int, total: int) -> str:
+    """Mini progress bar filled by position-group percentile (rank gradient)."""
+    color = rank_color(rank, total)
+    display_score = rank_to_display_score(min(max(rank, 1), total), total)
+    width_pct = max(6.0, min(100.0, (display_score - 3.0) / 6.0 * 100.0))
+    return (
+        f'<span class="rank-tip">'
+        f'<span class="rank-bar">'
+        f'<span class="rank-bar-fill" style="width:{width_pct:.0f}%;background:{color}"></span>'
+        f"</span>"
+        f'<span class="rank-tipbox">{rank}/{total}</span>'
+        f"</span>"
+    )
+
+
+def rating_value_color(pass_rating: float | None) -> str:
+    if pass_rating is None:
+        return "#334155"
+    return score_display_color(float(pass_rating) * 10.0)
+
+
+def _pa_rating_box_colors(player: dict, *, rating_key: str) -> tuple[str, str]:
+    """Background and text colors for Player Analysis rating boxes."""
+    rating_val = player.get(rating_key)
+    if rating_val is None:
+        return "#334155", "#f8fafc"
+    bg = rating_value_color(float(rating_val))
+    return bg, _badge_text_color(bg)
+
+
+def _section_rating_pill_html(score: float | None) -> str:
+    if score is None:
+        return '<span class="section-rating-pill" style="background:#334155;color:#f8fafc">—</span>'
+    bg = rating_value_color(float(score))
+    txt = _badge_text_color(bg)
+    return (
+        f'<span class="section-rating-pill" style="background:{bg};color:{txt}">'
+        f"{html.escape(fmt_rating_score(score))}</span>"
+    )
+
+
+def _player_options(rated: list[dict]) -> list[tuple[str, str, str, str]]:
+    rows = sorted(
+        {(p["player_id"], p["player_name"], p.get("team", "—")) for p in rated},
+        key=lambda x: _norm(x[1]),
+    )
+    return [(pid, name, team, f"{name} ({team})") for pid, name, team in rows]
+
+
+def _player_position_code(player: dict) -> str:
+    return str(player.get("position") or "").strip().upper()
+
+
+def _position_filter_from_blocks(
+    block_ids: set[str],
+    *,
+    block_map: dict[str, tuple[str, frozenset[str] | None, str | None]] | None = None,
+) -> tuple[frozenset[str], frozenset[str]]:
+    codes: set[str] = set()
+    groups: set[str] = set()
+    lookup = block_map or PLAYER_POSITION_BLOCK_BY_ID
+    for block_id in block_ids:
+        entry = lookup.get(block_id)
+        if not entry:
+            continue
+        _label, block_codes, rating_group = entry
+        if block_codes:
+            codes.update(block_codes)
+        if rating_group:
+            groups.add(rating_group)
+    return frozenset(codes), frozenset(groups)
+
+
+def _player_matches_position_filter(
+    player: dict,
+    *,
+    position_codes: frozenset[str],
+    position_groups: frozenset[str],
+) -> bool:
+    if not position_codes and not position_groups:
+        return True
+    pos = _player_position_code(player)
+    group = str(player.get("position_group") or "")
+    if position_groups and group in position_groups:
+        return True
+    if position_codes and pos in position_codes:
+        return True
+    return False
+
+
+def _comparison_position_filter_for_player(player: dict) -> tuple[frozenset[str], frozenset[str]]:
+    """Rating pool for compare: same rating group (e.g. all central midfielders)."""
+    rating_group = str(player.get("position_group") or "")
+    block_ids = _RATING_GROUP_BLOCK_IDS.get(rating_group)
+    if block_ids:
+        return _position_filter_from_blocks(set(block_ids))
+    pos = _player_position_code(player)
+    return (frozenset({pos}) if pos else frozenset(), frozenset())
+
+
+def _comparison_pool_label(player: dict) -> str:
+    group = player.get("position_group")
+    if group:
+        return position_group_label(str(group))
+    return "position"
+
+
+def _position_block_for_player(
+    player: dict,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = PLAYER_ANALYSIS_POSITION_BLOCKS,
+) -> str:
+    pos = _player_position_code(player)
+    group = str(player.get("position_group") or "")
+    for block_id, _label, codes, rating_group in blocks:
+        if rating_group and group == rating_group:
+            return block_id
+        if codes and pos in codes:
+            return block_id
+    return blocks[0][0]
+
+
+def _coerce_position_block_id(
+    raw: object,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...],
+) -> str:
+    valid_ids = {block_id for block_id, *_rest in blocks}
+    block_id: str | None = None
+    if isinstance(raw, set):
+        block_id = next(iter(raw)) if raw else None
+    elif isinstance(raw, str):
+        block_id = raw
+    if block_id in _LEGACY_POSITION_BLOCK_IDS:
+        block_id = _LEGACY_POSITION_BLOCK_IDS[block_id]
+    if block_id not in valid_ids:
+        block_id = blocks[0][0]
+    return block_id
+
+
+def _position_blocks_state_key(key_prefix: str) -> str:
+    if key_prefix == "pa":
+        return PLAYER_ANALYSIS_POSITION_BLOCKS_KEY
+    if key_prefix == "stats":
+        return STATS_POSITION_BLOCKS_KEY
+    return f"{key_prefix}_position_blocks"
+
+
+def _player_map_id_key(key_prefix: str) -> str:
+    if key_prefix in {"pa", "maps"}:
+        return "map_player_id"
+    return f"{key_prefix}_map_player_id"
+
+
+def _position_select_widget_key(key_prefix: str) -> str:
+    return f"{key_prefix}_position_select"
+
+
+def _position_block_prev_key(state_key: str) -> str:
+    return f"{state_key}__prev"
+
+
+def _read_position_block_state(
+    state_key: str,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...],
+) -> str:
+    return _coerce_position_block_id(st.session_state.get(state_key), blocks)
+
+
+def _prepare_position_block_widget_state(
+    *,
+    state_key: str,
+    widget_key: str,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...],
+) -> tuple[str, bool]:
+    """Coerce canonical + widget values; migrate legacy rb/lb/rw/lw ids."""
+    if state_key not in st.session_state and widget_key in st.session_state:
+        st.session_state[state_key] = st.session_state[widget_key]
+
+    canonical_block = _read_position_block_state(state_key, blocks)
+    st.session_state[state_key] = canonical_block
+
+    widget_migrated = False
+    if widget_key in st.session_state:
+        widget_block = _coerce_position_block_id(st.session_state.get(widget_key), blocks)
+        if widget_block != st.session_state[widget_key]:
+            st.session_state[widget_key] = widget_block
+            widget_migrated = True
+    else:
+        st.session_state[widget_key] = canonical_block
+
+    return canonical_block, widget_migrated
+
+
+def _clear_position_block_player_selection() -> None:
+    st.session_state.pop(PLAYER_ANALYSIS_SELECT_KEY, None)
+    _clear_player_select_widgets(key_prefix="pa")
+    st.session_state.pop(PLAYER_ANALYSIS_COMPARE_KEY, None)
+
+
+def _sync_position_block_state(
+    block_id: str,
+    *,
+    state_key: str,
+    key_prefix: str,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = PLAYER_ANALYSIS_POSITION_BLOCKS,
+) -> None:
+    coerced = _coerce_position_block_id(block_id, blocks)
+    st.session_state[state_key] = coerced
+    st.session_state[_position_select_widget_key(key_prefix)] = coerced
+    st.session_state.pop(_position_block_prev_key(state_key), None)
+
+
+def _render_position_block_slicer(
+    *,
+    key_prefix: str = "pa",
+    state_key: str = PLAYER_ANALYSIS_POSITION_BLOCKS_KEY,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = PLAYER_ANALYSIS_POSITION_BLOCKS,
+    block_map: dict[str, tuple[str, frozenset[str] | None, str | None]] | None = None,
+) -> tuple[frozenset[str], frozenset[str]]:
+    block_ids = [block_id for block_id, *_rest in blocks]
+    labels_by_id = {block_id: label for block_id, label, *_rest in blocks}
+    widget_key = _position_select_widget_key(key_prefix)
+
+    canonical_block, widget_migrated = _prepare_position_block_widget_state(
+        state_key=state_key,
+        widget_key=widget_key,
+        blocks=blocks,
+    )
+
+    prev_key = _position_block_prev_key(state_key)
+    raw_previous_block = st.session_state.get(prev_key)
+    previous_block = (
+        _coerce_position_block_id(raw_previous_block, blocks)
+        if raw_previous_block is not None
+        else None
+    )
+
+    selected_block = st.selectbox(
+        "Position",
+        options=block_ids,
+        format_func=lambda block_id: labels_by_id.get(block_id, block_id),
+        key=widget_key,
+    )
+    selected_block = _coerce_position_block_id(selected_block, blocks)
+
+    if selected_block != canonical_block:
+        st.session_state[state_key] = selected_block
+
+    position_changed = (
+        widget_migrated
+        or (previous_block is not None and previous_block != selected_block)
+    )
+    if position_changed and state_key == PLAYER_ANALYSIS_POSITION_BLOCKS_KEY:
+        _mark_user_position_pick()
+        _clear_position_block_player_selection()
+
+    st.session_state[prev_key] = selected_block
+
+    lookup = block_map or PLAYER_POSITION_BLOCK_BY_ID
+    return _position_filter_from_blocks({selected_block}, block_map=lookup)
+
+
+def _player_select_widget_key(key_prefix: str) -> str:
+    return f"{key_prefix}_{PLAYER_ANALYSIS_SELECT_KEY}"
+
+
+def _clear_url_player_query_param() -> None:
+    try:
+        if "player_id" in st.query_params:
+            del st.query_params["player_id"]
+    except Exception:
+        try:
+            st.query_params.pop("player_id", None)
+        except Exception:
+            pass
+
+
+def _mark_user_position_pick() -> None:
+    st.session_state[PA_USER_POSITION_PICK_KEY] = True
+    st.session_state.pop(PA_USER_PLAYER_PICK_KEY, None)
+
+
+def _mark_user_player_pick() -> None:
+    st.session_state[PA_USER_PLAYER_PICK_KEY] = True
+    _clear_url_player_query_param()
+    st.session_state.pop(PA_URL_PLAYER_KEY, None)
+
+
+def _sync_player_select_from_map_id(
+    label_by_id: dict[str, str],
+    labels: list[str],
+    *,
+    key_prefix: str,
+) -> None:
+    if key_prefix == "pa" and st.session_state.get(PA_USER_PLAYER_PICK_KEY):
+        return
+    select_key = _player_select_widget_key(key_prefix)
+    map_id = st.session_state.get(_player_map_id_key(key_prefix))
+    if map_id and str(map_id) in label_by_id:
+        mapped_label = label_by_id[str(map_id)]
+        if mapped_label in labels:
+            st.session_state[select_key] = mapped_label
+
+
+def _clear_player_select_widgets(*, key_prefix: str = "pa") -> None:
+    select_key = _player_select_widget_key(key_prefix)
+    st.session_state.pop(select_key, None)
+    if key_prefix == "pa":
+        st.session_state.pop(PLAYER_ANALYSIS_SELECT_KEY, None)
+    st.session_state.pop(_player_map_id_key(key_prefix), None)
+
+
+def _player_analysis_options(
+    players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    position_codes: frozenset[str],
+    position_groups: frozenset[str] = frozenset(),
+    xp_by_id: dict[str, dict] | None = None,
+    exclude_player_id: str | None = None,
+    sort_by: str = "xp_pass_rating",
+) -> list[tuple[str, str, str, str]]:
+    """Player slicer options ranked within selected position blocks."""
+    ranked_rows: list[tuple[str, str, str, float]] = []
+    for player in players:
+        pid = str(player["player_id"])
+        if exclude_player_id and pid == str(exclude_player_id):
+            continue
+        profile = progression_by_id.get(pid, player)
+        if not _player_matches_position_filter(
+            profile,
+            position_codes=position_codes,
+            position_groups=position_groups,
+        ):
+            continue
+        xp_profile = (xp_by_id or {}).get(pid, {})
+        if sort_by == "dist_index_mean":
+            sort_val = xp_profile.get("xp_dist_index_mean")
+            sort_key = float(sort_val) if sort_val is not None else float("-inf")
+        elif sort_by == "xp_pass_rating":
+            rating_val = xp_profile.get("xp_pass_rating")
+            sort_key = float(rating_val) if rating_val is not None else float("-inf")
+        else:
+            sort_key = float(xp_profile.get("xp_m4_total", 0.0))
+        ranked_rows.append((
+            pid,
+            str(player.get("player_name", "—")),
+            str(player.get("team", "—")),
+            sort_key,
+        ))
+
+    ranked_rows.sort(key=lambda row: (-row[3], _norm(row[1])))
+    options: list[tuple[str, str, str, str]] = []
+    for idx, (pid, name, team, sort_key) in enumerate(ranked_rows, start=1):
+        xp_profile = (xp_by_id or {}).get(pid, {})
+        if sort_by == "dist_index_mean":
+            mean_val = xp_profile.get("xp_dist_index_mean")
+            suffix = f"· Dist Index {float(mean_val):.2f}" if mean_val is not None else "· Dist Index —"
+        elif sort_by == "xp_pass_rating":
+            rating_val = xp_profile.get("xp_pass_rating")
+            suffix = f"· Pass {fmt_rating_score(rating_val)}" if rating_val is not None else "· Pass —"
+        else:
+            suffix = f"· xP {sort_key:.1f}"
+        options.append((pid, name, team, f"#{idx} {name} ({team}) {suffix}"))
+    return options
+
+
+def _render_shared_player_slicers(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    players_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+    key_prefix: str = "pa",
+    state_key: str | None = None,
+    sort_by: str = "xp_pass_rating",
+) -> str | None:
+    """Position block slicer + player selectbox. Returns selected player_id or None."""
+    blocks_state_key = state_key or _position_blocks_state_key(key_prefix)
+    map_id_key = _player_map_id_key(key_prefix)
+    with st.container():
+        st.markdown('<div class="pa-slicer-panel">', unsafe_allow_html=True)
+        pos_col, player_col = st.columns([1, 1], gap="medium")
+        with pos_col:
+            with st.container(key=f"{key_prefix}_position_slicer"):
+                position_codes, position_groups = _render_position_block_slicer(
+                    key_prefix=key_prefix,
+                    state_key=blocks_state_key,
+                )
+        selected_label = None
+        id_by_label: dict[str, str] = {}
+        with player_col:
+            with st.container(key=f"{key_prefix}_player_slicer"):
+                if not position_codes and not position_groups:
+                    st.info("Select a position to filter players.")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    return None
+                options = _player_analysis_options(
+                    all_players,
+                    progression_by_id,
+                    position_codes=position_codes,
+                    position_groups=position_groups,
+                    xp_by_id=xp_by_id,
+                    sort_by=sort_by,
+                )
+                if not options:
+                    st.info("No players available for the selected filters.")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    return None
+
+                labels = [o[3] for o in options]
+                id_by_label = {o[3]: o[0] for o in options}
+                label_by_id = {o[0]: o[3] for o in options}
+
+                _sync_player_analysis_selection(players_by_id, label_by_id, key_prefix=key_prefix)
+
+                select_key = _player_select_widget_key(key_prefix)
+                current_label = st.session_state.get(select_key)
+                if current_label and current_label not in labels:
+                    st.session_state.pop(select_key, None)
+                    current_label = None
+                if select_key not in st.session_state:
+                    _sync_player_select_from_map_id(label_by_id, labels, key_prefix=key_prefix)
+
+                selected_label = st.selectbox(
+                    "Player",
+                    options=labels,
+                    key=select_key,
+                    placeholder="Select a player",
+                )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if not selected_label:
+        st.info("Select a player to continue.")
+        return None
+
+    player_id = id_by_label[selected_label]
+    prev_id = st.session_state.get(map_id_key)
+    st.session_state[map_id_key] = player_id
+    if key_prefix == "pa":
+        st.session_state["map_player_id"] = player_id
+    if prev_id != player_id:
+        if key_prefix == "pa":
+            _mark_user_player_pick()
+        st.session_state["pa_last_player_id"] = player_id
+        st.session_state.pop(PLAYER_ANALYSIS_SIMILAR_PICK_KEY, None)
+        st.session_state.pop(PLAYER_ANALYSIS_COMPARE_KEY, None)
+        if st.query_params.get("similar_idx") is None and st.query_params.get("pa_similar") != "1":
+            st.session_state.pop(PLAYER_ANALYSIS_SHOW_SIMILAR_KEY, None)
+    return player_id
+
+
+def _all_position_filters() -> tuple[frozenset[str], frozenset[str]]:
+    codes: set[str] = set()
+    groups: set[str] = set()
+    for _block_id, _label, block_codes, rating_group in PLAYER_ANALYSIS_POSITION_BLOCKS:
+        if block_codes:
+            codes.update(block_codes)
+        if rating_group:
+            groups.add(rating_group)
+    return frozenset(codes), frozenset(groups)
+
+
+def _render_player_only_slicer(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    players_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+    key_prefix: str = "maps",
+) -> str | None:
+    """Player selectbox only (no position blocks) — used on Maps tab."""
+    with st.container(key=f"{key_prefix}_player_slicer"):
+        all_codes, all_groups = _all_position_filters()
+        options = _player_analysis_options(
+            all_players,
+            progression_by_id,
+            position_codes=all_codes,
+            position_groups=all_groups,
+            xp_by_id=xp_by_id,
+            sort_by="xp_pass_rating",
+        )
+        if not options:
+            st.info("No players available.")
+            return None
+
+        labels = [o[3] for o in options]
+        id_by_label = {o[3]: o[0] for o in options}
+        label_by_id = {o[0]: o[3] for o in options}
+
+        _sync_player_analysis_selection(players_by_id, label_by_id, key_prefix=key_prefix)
+
+        select_key = _player_select_widget_key(key_prefix)
+        current_label = st.session_state.get(select_key)
+        if current_label and current_label not in labels:
+            st.session_state.pop(select_key, None)
+            current_label = None
+        if select_key not in st.session_state:
+            _sync_player_select_from_map_id(label_by_id, labels, key_prefix=key_prefix)
+
+        selected_label = st.selectbox(
+            "Player",
+            options=labels,
+            key=select_key,
+            placeholder="Select a player",
+        )
+
+    if not selected_label:
+        st.info("Select a player to continue.")
+        return None
+
+    player_id = id_by_label[selected_label]
+    prev_id = st.session_state.get("map_player_id")
+    st.session_state["map_player_id"] = player_id
+    if prev_id != player_id:
+        _mark_user_player_pick()
+        st.session_state["pa_last_player_id"] = player_id
+        st.session_state.pop(PLAYER_ANALYSIS_SIMILAR_PICK_KEY, None)
+        st.session_state.pop(PLAYER_ANALYSIS_COMPARE_KEY, None)
+        if st.query_params.get("similar_idx") is None and st.query_params.get("pa_similar") != "1":
+            st.session_state.pop(PLAYER_ANALYSIS_SHOW_SIMILAR_KEY, None)
+    return player_id
+
+
+def _sync_player_selection(
+    players_by_id: dict[str, dict],
+    label_by_id: dict[str, str],
+    *,
+    map_id_key: str = "map_player_id",
+    selectbox_key: str = SELECTBOX_KEY,
+) -> None:
+    qp = st.query_params.get("player_id")
+    if qp and qp in players_by_id:
+        st.session_state[map_id_key] = qp
+        st.session_state[selectbox_key] = label_by_id[qp]
+
+
+def _rating_table_rows_html(
+    rows: list[dict],
+    *,
+    selected_player_id: str | None,
+    rating_key: str = "pass_rating",
+) -> str:
+    body = []
+    for row in rows:
+        pid = html.escape(str(row["player_id"]))
+        rating_txt = _rating_score_html(row, soft_warning=True, rating_key=rating_key)
+        sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
+        body.append(
+            f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
+            f"<td>{html.escape(str(row['Player']))}</td>"
+            f"<td class='team'>{html.escape(str(row['Team']))}</td>"
+            f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
+            "</tr>"
+        )
+    return (
+        '<table class="rx"><thead><tr>'
+        f'{"".join(f"<th>{html.escape(c)}</th>" for c in RATING_COLUMNS)}'
+        f"</tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+def _progression_rating_table_rows_html(
+    rows: list[dict],
+    *,
+    selected_player_id: str | None,
+) -> str:
+    body = []
+    for row in rows:
+        pid = html.escape(str(row["player_id"]))
+        overall_txt = _rating_score_html(row, soft_warning=True, rating_key="progression_rating")
+        pass_txt = _rating_score_html(row, soft_warning=True, rating_key="pass_rating")
+        carry_txt = _rating_score_html(row, soft_warning=True, rating_key="carry_rating")
+        sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
+        body.append(
+            f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
+            f"<td>{html.escape(str(row['Player']))}</td>"
+            f"<td class='team'>{html.escape(str(row['Team']))}</td>"
+            f'<td class="rating"><span class="rating-cell-wrap">{overall_txt}</span></td>'
+            f'<td class="rating"><span class="rating-cell-wrap">{pass_txt}</span></td>'
+            f'<td class="rating"><span class="rating-cell-wrap">{carry_txt}</span></td>'
+            "</tr>"
+        )
+    return (
+        '<table class="rx"><thead><tr>'
+        f'{"".join(f"<th>{html.escape(c)}</th>" for c in RATING_COLUMNS_OVERALL)}'
+        f"</tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+_RANKING_EMBED_CSS = """
+.ranking-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0.85rem}
+@media (max-width:1100px){.ranking-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:720px){.ranking-grid{grid-template-columns:1fr}}
+.ranking-card-wrap{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);
+  border:1px solid #2a3550;border-radius:12px;overflow:hidden;
+  box-shadow:0 8px 24px rgba(0,0,0,0.22)}
+.ranking-card-head{display:flex;align-items:center;justify-content:space-between;
+  padding:0.72rem 0.9rem;border-bottom:1px solid #243049;font-size:0.82rem;font-weight:700;
+  letter-spacing:0.04em;text-transform:uppercase;color:#e2e8f0}
+.ranking-card-head span{font-size:0.72rem;color:#64748b;font-weight:600}
+.rx{width:100%;border-collapse:collapse;font-size:0.86rem}
+.rx th,.rx td{padding:8px 10px;text-align:left;vertical-align:middle}
+.rx th{background:#141b2d;color:#8fa3bf;font-weight:600;font-size:0.68rem;
+  letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #2f3b56}
+.rx td{border-bottom:1px solid #232d42}
+.rx tr.row{cursor:default}
+.rx tr:last-child td{border-bottom:none}
+.team{color:#9fb0c7;font-size:0.8rem}
+.rating{font-weight:700;color:#dbeafe;text-align:right;white-space:nowrap}
+.rating-cell-wrap{display:inline-flex;align-items:center;justify-content:flex-end;gap:0.2rem;white-space:nowrap}
+.rating-warning{font-size:1rem;line-height:1;cursor:help;color:#fbbf24}
+.rating-warning-soft{font-size:0.68rem;font-weight:700;color:#d4a017;opacity:0.82}
+.rating-warning-tip{position:relative;display:inline-flex;align-items:center}
+.rating-sample-tipbox{display:none;position:absolute;z-index:111;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
+  background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.72rem;font-weight:500;
+  color:#e2e8f0;white-space:normal;max-width:220px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.4);pointer-events:none}
+.rating-sample-tip:hover .rating-sample-tipbox{display:block}
+.rating-badge-tip{position:relative;display:inline-flex;align-items:center;margin-left:0.15rem}
+.rating-fa-badge{font-size:0.82rem;width:1rem;text-align:center;line-height:1}
+.rating-fa-badge.dual-elite{color:#f59e0b}
+.rating-achievement-dot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1px solid rgba(255,255,255,0.25)}
+.rating-achievement-dot.dual-elite{background:#f59e0b}
+.rating-tipbox{display:none;position:absolute;z-index:111;left:50%;top:calc(100% + 6px);transform:translateX(-50%);
+  background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.68rem;color:#e2e8f0;white-space:nowrap}
+.rating-badge-tip:hover .rating-tipbox{display:block}
+"""
+
+
+def _ranking_grid_html(
+    groups: list[tuple[str, list[dict]]],
+    *,
+    selected_player_id: str | None = None,
+    rating_key: str = "pass_rating",
+    overall: bool = False,
+) -> str:
+    cards = []
+    for group, rows in groups:
+        accent = GROUP_COLORS.get(group, "#60a5fa")
+        label = position_group_label(group)
+        table_html = (
+            _progression_rating_table_rows_html(rows, selected_player_id=selected_player_id)
+            if overall
+            else _rating_table_rows_html(rows, selected_player_id=selected_player_id, rating_key=rating_key)
+        )
+        cards.append(
+            f'<div class="ranking-card-wrap" style="border-top:3px solid {accent}">'
+            f'<div class="ranking-card-head">{html.escape(label)}'
+            f"<span>{len(rows)} players</span></div>"
+            f"{table_html}"
+            "</div>"
+        )
+    return f"<style>{_RANKING_EMBED_CSS}</style><div class=\"ranking-grid\">{''.join(cards)}</div>"
+
+
+def _rating_board_iframe_height(groups: list[tuple[str, list[dict]]]) -> int:
+    card_heights = [48 + 44 * len(rows) for _, rows in groups]
+    cols_per_row = 3
+    grid_gap = 14
+    total_height = 0
+    for row_start in range(0, len(card_heights), cols_per_row):
+        row_heights = card_heights[row_start : row_start + cols_per_row]
+        total_height += max(row_heights)
+        if row_start + cols_per_row < len(card_heights):
+            total_height += grid_gap
+    return min(total_height + 20, 2200)
+
+
+def _rating_groups_from_rated(
+    rated: list[dict],
+    *,
+    rating_key: str = "pass_rating",
+) -> list[tuple[str, list[dict]]]:
+    groups: list[tuple[str, list[dict]]] = []
+    for group in POSITION_GROUPS_ORDER:
+        subset = sorted(
+            [p for p in rated if p["position_group"] == group],
+            key=lambda p: p.get(rating_key, 0),
+            reverse=True,
+        )[:RATING_TOP_N]
+        if not subset:
+            continue
+        rows = [
+            {
+                "player_id": p["player_id"],
+                "Player": p["player_name"],
+                "Team": p["team"],
+                "pass_rating": p.get("pass_rating"),
+                "carry_rating": p.get("carry_rating"),
+                "progression_rating": p.get("progression_rating"),
+                "minutes": p.get("minutes"),
+                "passes_completed": p.get("passes_completed"),
+                "rating_confidence": p.get("rating_confidence"),
+                "pass_rating_confidence": p.get("pass_rating_confidence") or p.get("rating_confidence"),
+                "carry_rating_confidence": p.get("carry_rating_confidence") or p.get("rating_confidence"),
+                "rating_percentile": p.get("rating_percentile"),
+                "rating_uncertainty": p.get("rating_uncertainty"),
+                "rating_pareto_badge": p.get("rating_pareto_badge"),
+                "rating_pareto_dims": p.get("rating_pareto_dims"),
+                "rating_archetype_badge": p.get("rating_archetype_badge"),
+                "rating_archetype_rank": p.get("rating_archetype_rank"),
+                "rating_dual_elite_badge": p.get("rating_dual_elite_badge"),
+                "metric_ranks": p.get("metric_ranks", {}),
+            }
+            for p in subset
+        ]
+        groups.append((group, rows))
+    return groups
+
+
+def _progression_rating_groups_from_rated(rated: list[dict]) -> list[tuple[str, list[dict]]]:
+    return _rating_groups_from_rated(rated, rating_key="progression_rating")
+
+
+def render_rating_board(
+    groups: list[tuple[str, list[dict]]],
+    *,
+    selected_player_id: str | None,
+    rating_key: str = "pass_rating",
+    overall: bool = False,
+) -> None:
+    if not groups:
+        st.info("No eligible players for ranking.")
+        return
+
+    height = _rating_board_iframe_height(groups)
+    grid_html = _ranking_grid_html(
+        groups,
+        selected_player_id=selected_player_id,
+        rating_key=rating_key,
+        overall=overall,
+    )
+    page = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="{FONT_AWESOME_CDN}" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#e8edf5;background:transparent}}
+.rx tr.row{{cursor:pointer;transition:background .15s ease}}
+.rx tr.row:hover td{{background:#1a2238}}
+.rx tr.row.sel td{{background:#1c3354}}
+.rx tr.row.sel td:first-child{{box-shadow:inset 3px 0 0 #60a5fa}}
+</style>
+<script>
+function pickPlayer(pid) {{
+  try {{
+    const base = window.parent !== window ? window.parent : window;
+    const url = new URL(base.location.href);
+    url.searchParams.set("player_id", pid);
+    base.location.href = url.toString();
+  }} catch (e) {{
+    const url = new URL(window.location.href);
+    url.searchParams.set("player_id", pid);
+    window.location.href = url.toString();
+  }}
+}}
+</script></head><body>
+{grid_html}
+</body></html>"""
+    components.html(page, height=height, scrolling=height >= 2200)
+
+
+def render_rating_table(
+    rows: list[dict],
+    *,
+    selected_player_id: str | None,
+) -> None:
+    if not rows:
+        st.info("No eligible players in this position.")
+        return
+
+    body = []
+    for row in rows:
+        pid = html.escape(str(row["player_id"]))
+        rating_txt = _rating_score_html(row, soft_warning=True)
+        sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
+        body.append(
+            f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
+            f"<td>{html.escape(str(row['Player']))}</td>"
+            f"<td class='team'>{html.escape(str(row['Team']))}</td>"
+            f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
+            "</tr>"
+        )
+
+    page = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="{FONT_AWESOME_CDN}" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#e8edf5;background:transparent}}
+.rx{{width:100%;border-collapse:separate;border-spacing:0;font-size:0.9rem;
+  border:1px solid #2a3550;border-radius:10px;overflow:hidden}}
+.rx th,.rx td{{padding:9px 12px;text-align:left;vertical-align:middle}}
+.rx th{{background:linear-gradient(180deg,#1b2438,#141b2d);color:#8fa3bf;font-weight:600;
+  font-size:0.72rem;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #2f3b56}}
+.rx td{{border-bottom:1px solid #232d42}}
+.rx tr.row{{cursor:pointer;transition:background .15s ease}}
+.rx tr.row:hover td{{background:#1a2238}}
+.rx tr.row.sel td{{background:#1c3354}}
+.rx tr.row.sel td:first-child{{box-shadow:inset 3px 0 0 #60a5fa}}
+.rx tr:last-child td{{border-bottom:none}}
+.team{{color:#9fb0c7}}
+.rating{{font-weight:700;color:#dbeafe}}
+</style>
+<script>
+function pickPlayer(pid) {{
+  try {{
+    const base = window.parent !== window ? window.parent : window;
+    const url = new URL(base.location.href);
+    url.searchParams.set("player_id", pid);
+    base.location.href = url.toString();
+  }} catch (e) {{
+    const url = new URL(window.location.href);
+    url.searchParams.set("player_id", pid);
+    window.location.href = url.toString();
+  }}
+}}
+</script></head><body>
+<table class="rx"><thead><tr>
+{"".join(f"<th>{html.escape(c)}</th>" for c in RATING_COLUMNS)}
+</tr></thead><tbody>{"".join(body)}</tbody></table>
+</body></html>"""
+
+    height = min(44 * len(rows) + 52, 920)
+    components.html(page, height=height, scrolling=False)
+
+
+def _rating_warnings_html(player: dict) -> str:
+    warnings: list[str] = []
+    if not player.get("eligible_minutes", True):
+        min_minutes_pct = player.get("position_min_minutes_pct")
+        if min_minutes_pct is not None:
+            warnings.append(
+                f"Minutes below group P25 (min. {fmt_pct(float(min_minutes_pct) * 100.0)})"
+            )
+        else:
+            warnings.append("Insufficient minutes for eligibility")
+    if not player.get("eligible_passes", True):
+        min_passes = player.get("position_min_passes")
+        if min_passes is not None:
+            min_txt = fmt_stat_value("passes_completed", min_passes)
+            warnings.append(f"Passes below group P25 (min. {min_txt})")
+        else:
+            warnings.append("Insufficient passes for eligibility")
+    return "".join(
+        '<span class="rating-warning-tip">'
+        '<span class="rating-warning">⚠</span>'
+        f'<span class="rating-tipbox">{html.escape(msg)}</span>'
+        "</span>"
+        for msg in warnings
+    )
+
+
+def _stat_display(
+    player: dict,
+    key: str,
+    *,
+    fmt_pct_fn=fmt_pct,
+    fmt_stat_fn=fmt_stat_value,
+) -> str:
+    if key == "minutes_pct":
+        pct = player.get("minutes_pct")
+        return fmt_pct_fn(pct * 100.0) if pct is not None else "—"
+    return fmt_stat_fn(key, player.get(key))
+
+
+def _badge_text_color(hex_color: str) -> str:
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#1e293b" if lum > 168 else "#f8fafc"
+
+
+def _similarity_metric_label_html(key: str) -> str:
+    return html.escape(sim.similarity_metric_label(key))
+
+
+def _metric_label_html(
+    key: str,
+    *,
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+) -> str:
+    label = label_fn(key)
+    tip = (tooltip_fn(key) or "").strip()
+    if not tip:
+        return html.escape(label)
+    tip_html = html.escape(tip)
+    return (
+        f'<span class="metric-tip" tabindex="0">{html.escape(label)}'
+        f'<span class="metric-tipbox">{tip_html}</span></span>'
+    )
+
+
+def _metric_rank_subtitle_html(
+    player: dict,
+    key: str,
+    metric_ranks: dict,
+    *,
+    rank_in_group_fn=rank_in_group_label,
+) -> str:
+    info = metric_ranks.get(key)
+    if not info:
+        return ""
+    return (
+        f'<span class="metric-rank-sub">'
+        f'{html.escape(rank_in_group_fn(int(info["rank"]), player.get("position_group")))}'
+        f"</span>"
+    )
+
+
+def _metric_line_html(
+    label: str,
+    key: str,
+    value: str,
+    metric_ranks: dict,
+    *,
+    player: dict | None = None,
+    show_rank: bool = True,
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+    rank_in_group_fn=rank_in_group_label,
+) -> str:
+    badge = ""
+    if show_rank:
+        info = metric_ranks.get(key)
+        if info:
+            rank = int(info["rank"])
+            total = int(info["total"])
+            badge = _rank_bar_html(rank, total)
+    value_inner = (
+        f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
+        if badge
+        else f'<span class="stat-val">{html.escape(value)}</span>'
+    )
+    label_html = _metric_label_html(key, label_fn=label_fn, tooltip_fn=tooltip_fn) if key else html.escape(label)
+    return (
+        '<div class="metric-line">'
+        f"<span>{label_html}</span>"
+        f'<span style="text-align:right">{value_inner}</span>'
+        "</div>"
+    )
+
+
+def _section_header_html(title: str, section_key: str, player: dict) -> str:
+    _ = (section_key, player)
+    return (
+        '<div class="stat-section-row">'
+        f'<span class="stat-section">{html.escape(title)}</span>'
+        "</div>"
+    )
+
+
+def _build_sections_html(
+    player: dict,
+    metric_ranks: dict,
+    sections: list[tuple[str, str | None, tuple[str, ...], bool]],
+    *,
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+    rank_in_group_fn=rank_in_group_label,
+    fmt_pct_fn=fmt_pct,
+    fmt_stat_fn=fmt_stat_value,
+) -> str:
+    parts: list[str] = []
+    for title, section_key, keys, show_rank in sections:
+        if section_key:
+            parts.append(_section_header_html(title, section_key, player))
+        else:
+            parts.append(
+                f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>'
+            )
+        for key in keys:
+            parts.append(
+                _metric_line_html(
+                    label_fn(key),
+                    key,
+                    _stat_display(player, key, fmt_pct_fn=fmt_pct_fn, fmt_stat_fn=fmt_stat_fn),
+                    metric_ranks,
+                    player=player,
+                    show_rank=show_rank,
+                    label_fn=label_fn,
+                    tooltip_fn=tooltip_fn,
+                    rank_in_group_fn=rank_in_group_fn,
+                )
+            )
+    return "".join(parts)
+
+
+def _player_rating_slot_html(
+    player: dict,
+    metric_ranks: dict,
+    *,
+    rating_key: str = "pass_rating",
+) -> str:
+    rating_val = player.get(rating_key)
+    rating_info = metric_ranks.get(rating_key)
+    badges = _rating_badges_html(player)
+    low_sample = _is_low_sample_rating(player, rating_key=rating_key)
+    low_cls = " rating-box-low-sample" if low_sample and rating_val is not None else ""
+    score_inner = _rating_score_value_html(player, rating_key=rating_key)
+    sample_warning = _rating_sample_warning_html(player)
+
+    if rating_info and rating_val is not None:
+        r_color = rating_value_color(rating_val)
+        r_txt = _badge_text_color(r_color)
+        rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
+        rating_box = (
+            f'<span class="rating-box-wrap">'
+            f'<span class="rating-tip">'
+            f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
+            f"{score_inner}</div>"
+            f'<span class="rating-rank-tipbox">{html.escape(rank_txt)}</span>'
+            f"</span>"
+            f"{sample_warning}"
+            f"</span>"
+        )
+    else:
+        rating_box = (
+            f'<span class="rating-box-wrap">'
+            f'<div class="rating-box{low_cls}" style="background:#334155;color:#f8fafc;margin-bottom:0">'
+            f"{score_inner}</div>"
+            f"{sample_warning}"
+            f"</span>"
+        )
+
+    badges_html = f'<div class="rating-meta">{badges}</div>' if badges else ""
+    return f'<div class="player-rating-slot">{rating_box}{badges_html}</div>'
+
+
+def _progression_rating_slot_html(player: dict, metric_ranks: dict) -> str:
+    slot = _player_rating_slot_html(player, metric_ranks, rating_key="progression_rating")
+    pass_txt = fmt_rating_score(player.get("pass_rating"))
+    carry_txt = fmt_rating_score(player.get("carry_rating"))
+    sub_row = (
+        '<div class="sub-rating-row">'
+        f'<span class="sub-rating-chip">Pass {html.escape(pass_txt)}</span>'
+        f'<span class="sub-rating-chip">Carry {html.escape(carry_txt)}</span>'
+        "</div>"
+    )
+    return slot + sub_row
+
+
+def _rating_display_box_html(
+    player: dict,
+    metric_ranks: dict,
+    *,
+    rating_key: str = "pass_rating",
+) -> str:
+    rating_val = player.get(rating_key)
+    rating_info = metric_ranks.get(rating_key)
+    low_sample = _is_low_sample_rating(player, rating_key=rating_key)
+    low_cls = " rating-box-low-sample" if low_sample and rating_val is not None else ""
+    score_inner = _rating_score_value_html(player, rating_key=rating_key)
+    sample_warning = _rating_sample_warning_html(player, rating_key=rating_key)
+
+    if rating_info and rating_val is not None:
+        r_color, r_txt = _pa_rating_box_colors(player, rating_key=rating_key)
+        rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
+        return (
+            f'<span class="rating-box-wrap">'
+            f'<span class="rating-tip">'
+            f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
+            f"{score_inner}</div>"
+            f'<span class="rating-rank-tipbox">{html.escape(rank_txt)}</span>'
+            f"</span>"
+            f"{sample_warning}"
+            f"</span>"
+        )
+    r_color, r_txt = _pa_rating_box_colors(player, rating_key=rating_key)
+    return (
+        f'<span class="rating-box-wrap">'
+        f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
+        f"{score_inner}</div>"
+        f"{sample_warning}"
+        f"</span>"
+    )
+
+
+def _player_analysis_rating_block_html(
+    player: dict,
+    metric_ranks: dict,
+    *,
+    rating_key: str,
+    label: str,
+    show_badges: bool = False,
+) -> str:
+    badges = _rating_badges_html(player) if show_badges else ""
+    badges_html = (
+        f'<div class="pa-rating-badges">{badges}</div>' if badges else ""
+    )
+    block_cls = " pa-rating-block-overall" if show_badges else ""
+    return (
+        f'<div class="pa-rating-block{block_cls}">'
+        f'<div class="pa-rating-block-label">{html.escape(label)}</div>'
+        f'<div class="pa-rating-block-score">'
+        f'{_rating_display_box_html(player, metric_ranks, rating_key=rating_key)}'
+        "</div>"
+        f"{badges_html}"
+        "</div>"
+    )
+
+
+def _placeholder_rating_block_html(label: str) -> str:
+    score = (
+        '<div class="rating-box" style="background:#1e293b;color:#94a3b8;margin-bottom:0">'
+        "—"
+        "</div>"
+    )
+    return (
+        f'<div class="pa-rating-block">'
+        f'<div class="pa-rating-block-label">{html.escape(label)}</div>'
+        f'<div class="pa-rating-block-score">{score}</div>'
+        "</div>"
+    )
+
+
+def _xp_pass_grade_pct(display_score: float) -> float:
+    """Map pass grade (4.5–9.0 percentile scale) to gradient position."""
+    return max(0.0, min(100.0, (display_score - 4.5) / 4.5 * 100.0))
+
+
+def _pass_grade_gradient_color(pct: float) -> str:
+    """Sample the pass-grade bar gradient at a horizontal position."""
+    stops: tuple[tuple[float, tuple[int, int, int]], ...] = (
+        (0.0, (0x7F, 0x1D, 0x1D)),
+        (24.0, (0xB4, 0x53, 0x09)),
+        (42.0, (0xCA, 0x8A, 0x04)),
+        (68.0, (0x65, 0xA3, 0x0D)),
+        (100.0, (0x16, 0xA3, 0x4A)),
+    )
+    position = max(0.0, min(100.0, float(pct)))
+    for index in range(len(stops) - 1):
+        start_pct, start_rgb = stops[index]
+        end_pct, end_rgb = stops[index + 1]
+        if position <= end_pct:
+            span = end_pct - start_pct
+            t = 0.0 if span <= 0 else (position - start_pct) / span
+            rgb = tuple(
+                int(start_rgb[channel] + (end_rgb[channel] - start_rgb[channel]) * t)
+                for channel in range(3)
+            )
+            return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+    return "#16a34a"
+
+
+_PASS_GRADE_TIERS: tuple[tuple[float, str, str], ...] = (
+    (8.0, "elite", "Elite"),
+    (7.0, "strong", "Very good"),
+    (6.0, "solid", "Good"),
+    (5.0, "average", "Average"),
+    (0.0, "low", "Below average"),
+)
+
+
+def _pass_grade_tier(display_score: float) -> tuple[str, str]:
+    for floor, key, label in _PASS_GRADE_TIERS:
+        if display_score >= floor:
+            return key, label
+    return "low", "Below average"
+
+
+def _player_analysis_pass_grade_panel_html(
+    player: dict,
+    xp_profile: dict | None,
+) -> str:
+    head = (
+        '<div class="pa-pass-grade-head">'
+        '<span class="pa-pass-grade-icon"><i class="fa-solid fa-award" aria-hidden="true"></i></span>'
+        '<span class="pa-pass-grade-title">Overall Pass Grade</span>'
+    )
+    if not xp_profile or xp_profile.get("xp_pass_rating") is None:
+        return (
+            '<div class="player-card pa-pass-grade-card">'
+            f"{head}</div>"
+            '<p class="pa-placeholder-note">Grade unavailable</p>'
+            "</div>"
+        )
+
+    merged = {**player, **xp_profile}
+    rating_val = float(xp_profile["xp_pass_rating"])
+    display_score = rating_val * 10.0
+    pct = _xp_pass_grade_pct(display_score)
+    marker_pct = max(1.5, min(98.5, pct))
+    tier_key, tier_label = _pass_grade_tier(display_score)
+    score_txt = html.escape(fmt_rating_score(rating_val))
+    accent = _pass_grade_gradient_color(pct)
+    low_sample = _is_low_sample_rating(merged, rating_key="xp_pass_rating")
+    low_cls = " pa-pass-grade-low-sample" if low_sample else ""
+    low_note = (
+        '<div class="pa-pass-grade-foot">'
+        '<span class="pa-pass-grade-flag" title="Small sample — grade shrunk toward the mean">'
+        '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> low sample'
+        "</span>"
+        "</div>"
+        if low_sample
+        else ""
+    )
+    return (
+        f'<div class="player-card pa-pass-grade-card pa-pass-grade-{tier_key}">'
+        f"{head}"
+        f'<span class="pa-pass-grade-tier" style="color:{accent};'
+        f'border-color:{accent}55;background:{accent}1f">{html.escape(tier_label)}</span>'
+        "</div>"
+        '<div class="pa-pass-grade-body">'
+        '<div class="pa-pass-grade-value">'
+        f'<span class="pa-pass-grade-score{low_cls}" style="color:{accent}">{score_txt}</span>'
+        '<span class="pa-pass-grade-scale">/ 10</span>'
+        "</div>"
+        '<div class="pa-pass-grade-meter">'
+        '<div class="pa-pass-grade-track">'
+        '<span class="pa-pass-grade-shade">'
+        f'<span class="pa-pass-grade-rest" style="left:{pct:.1f}%"></span>'
+        "</span>"
+        f'<span class="pa-pass-grade-marker" style="left:{marker_pct:.1f}%"></span>'
+        "</div>"
+        "</div>"
+        "</div>"
+        f"{low_note}"
+        "</div>"
+    )
+
+
+def _player_analysis_rating_panel_html(
+    player: dict,
+    metric_ranks: dict,
+    xp_profile: dict | None = None,
+) -> str:
+    _ = metric_ranks
+    return _player_analysis_pass_grade_panel_html(player, xp_profile)
+
+
+def _section_metric_avg_rank_bar_html(player: dict, keys: tuple[str, ...]) -> str:
+    """Bar filled by the average display score of metrics inside a sub-card."""
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    scores: list[float] = []
+    for key in keys:
+        info = metric_ranks.get(key)
+        if not info:
+            continue
+        rank = int(info.get("rank") or 0)
+        total = int(info.get("total") or 0)
+        if rank > 0 and total > 0:
+            scores.append(rank_to_display_score(rank, total))
+    if not scores:
+        return ""
+    avg_score = sum(scores) / len(scores)
+    color = score_display_color(avg_score)
+    width_pct = max(6.0, min(100.0, (avg_score - 3.0) / 6.0 * 100.0))
+    return (
+        f'<span class="rank-tip">'
+        f'<span class="rank-bar">'
+        f'<span class="rank-bar-fill" style="width:{width_pct:.0f}%;background:{color}"></span>'
+        f"</span>"
+        f'<span class="rank-tipbox">avg {avg_score:.1f}</span>'
+        f"</span>"
+    )
+
+
+def _section_grade_summary_bits(
+    player: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...] = (),
+    *,
+    rank_in_group_fn=rank_in_group_label,
+    show_section_bar: bool = False,
+) -> str:
+    _ = (section_key, rank_in_group_fn)
+    bar_html = ""
+    if show_section_bar and keys:
+        bar_html = _section_metric_avg_rank_bar_html(player, keys)
+    title_row = (
+        f'<div class="grade-card-title-row">'
+        f'<div class="grade-card-title">{html.escape(title)}</div>'
+        f"{bar_html}"
+        f"</div>"
+    )
+    return (
+        f'<div class="grade-summary-main">'
+        f'<div class="grade-summary-top">'
+        f"{title_row}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _section_grade_accordion_html(
+    player: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...],
+    *,
+    open: bool = False,
+    show_section_bar: bool = True,
+    accordion_name: str | None = None,
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+    rank_in_group_fn=rank_in_group_label,
+    fmt_pct_fn=fmt_pct,
+    fmt_stat_fn=fmt_stat_value,
+) -> str:
+    summary_main = _section_grade_summary_bits(
+        player,
+        section_key,
+        title,
+        keys,
+        rank_in_group_fn=rank_in_group_fn,
+        show_section_bar=show_section_bar,
+    )
+    lines = _section_grade_body_html(
+        player,
+        keys,
+        label_fn=label_fn,
+        tooltip_fn=tooltip_fn,
+        rank_in_group_fn=rank_in_group_fn,
+        fmt_pct_fn=fmt_pct_fn,
+        fmt_stat_fn=fmt_stat_fn,
+    )
+    open_attr = " open" if open else ""
+    name_attr = f' name="{html.escape(accordion_name)}"' if accordion_name else ""
+    return (
+        f'<details class="grade-accordion"{name_attr}{open_attr}>'
+        "<summary>"
+        '<i class="fa-solid fa-chevron-right grade-arrow" aria-hidden="true"></i>'
+        f"{summary_main}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
+    )
+
+
+def _build_dashboard_sidebar_html(
+    player: dict,
+    *,
+    scout_section_specs=SCOUT_SECTION_SPECS,
+    pillar_labels: dict[str, str] | None = None,
+    participation_keys: tuple[str, ...] = (
+        "minutes",
+        "passes_completed",
+        "minutes_pct",
+        "impact_passes",
+        "high_impact_passes",
+    ),
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+    rank_in_group_fn=rank_in_group_label,
+    fmt_pct_fn=fmt_pct,
+    fmt_stat_fn=fmt_stat_value,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+    rating_key: str = "pass_rating",
+    rating_slot_fn=None,
+    show_radar: bool = True,
+) -> str:
+    general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        ("Participation", None, participation_keys, False),
+    ]
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    rating_slot = (
+        rating_slot_fn(player, metric_ranks)
+        if rating_slot_fn is not None
+        else _player_rating_slot_html(player, metric_ranks, rating_key=rating_key)
+    )
+    sub_line = (
+        f"{html.escape(player.get('team', '—'))} · "
+        f"{html.escape(str(player.get('position', '—')))}"
+        f"{_rating_warnings_html(player)}"
+    )
+    profile_card = (
+        '<div class="player-card player-info-card">'
+        f"<h3>{html.escape(player['player_name'])}</h3>"
+        '<div class="player-meta-rating-row">'
+        f'<div class="player-sub-line">{sub_line}</div>'
+        f"{rating_slot}"
+        "</div>"
+        + _build_sections_html(
+            player,
+            metric_ranks,
+            general_sections,
+            label_fn=label_fn,
+            tooltip_fn=tooltip_fn,
+            rank_in_group_fn=rank_in_group_fn,
+            fmt_pct_fn=fmt_pct_fn,
+            fmt_stat_fn=fmt_stat_fn,
+        )
+        + "</div>"
+    )
+    radar_kwargs = {
+        "scout_section_specs": scout_section_specs,
+        "pillar_labels": pillar_labels,
+        "confidence_minutes": confidence_minutes,
+        "confidence_passes": confidence_passes,
+    }
+    radar_card = _pillar_radar_card_html(player, **radar_kwargs) if show_radar else ""
+    pillar_html = "".join(
+        _section_grade_accordion_html(
+            player,
+            section_key,
+            title,
+            keys,
+            open=False,
+            label_fn=label_fn,
+            tooltip_fn=tooltip_fn,
+            rank_in_group_fn=rank_in_group_fn,
+            fmt_pct_fn=fmt_pct_fn,
+            fmt_stat_fn=fmt_stat_fn,
+        )
+        for section_key, title, _subtitle, keys in scout_section_specs
+    )
+    return (
+        '<div class="sidebar-stack dashboard-sidebar-stack">'
+        f"{profile_card}"
+        f"{radar_card}"
+        f"{pillar_html}"
+        "</div>"
+    )
+
+
+def render_dashboard_sidebar(player: dict, **kwargs) -> None:
+    st.html(_build_dashboard_sidebar_html(player, **kwargs), width="stretch")
+
+
+def _participation_row_html(
+    label: str,
+    key: str,
+    value: str,
+    metric_ranks: dict,
+    *,
+    label_fn,
+    tooltip_fn,
+) -> str:
+    label_html = (
+        _metric_label_html(key, label_fn=label_fn, tooltip_fn=tooltip_fn)
+        if key
+        else html.escape(label)
+    )
+    badge = ""
+    info = metric_ranks.get(key)
+    if info:
+        rank = int(info["rank"])
+        total = int(info["total"])
+        badge = _rank_bar_html(rank, total)
+    value_inner = (
+        f'<span class="val-wrap">{badge}<span class="pa-part-val-num">{html.escape(value)}</span></span>'
+        if badge
+        else f'<span class="pa-part-val-num">{html.escape(value)}</span>'
+    )
+    return (
+        '<div class="pa-part-row">'
+        f'<span class="pa-part-label">{label_html}</span>'
+        f'<span class="pa-part-val">{value_inner}</span>'
+        "</div>"
+    )
+
+
+def _general_profile_value_html(player: dict, key: str, *, fmt_pct_fn) -> str:
+    value = player.get(key)
+    if value is None or value == "":
+        return "—"
+    if key == "minutes_pct":
+        return html.escape(fmt_pct_fn(value))
+    if key == "minutes":
+        return html.escape(str(int(round(float(value)))))
+    if key == "age":
+        return html.escape(str(int(value)))
+    return html.escape(str(value))
+
+
+def _general_profile_minutes_html(player: dict, *, fmt_pct_fn) -> str:
+    minutes = player.get("minutes")
+    minutes_pct = player.get("minutes_pct")
+    if minutes is None:
+        main = "—"
+    else:
+        main = html.escape(str(int(round(float(minutes)))))
+    pct_html = ""
+    if minutes_pct is not None:
+        pct_html = (
+            f'<span class="pa-minutes-inline-sub">'
+            f"({html.escape(fmt_pct_fn(minutes_pct))})"
+            f"</span>"
+        )
+    return f"{main}{pct_html}"
+
+
+def _general_profile_row_html(label: str, value: str) -> str:
+    return (
+        '<div class="pa-part-row">'
+        f'<span class="pa-part-label">{html.escape(label)}</span>'
+        f'<span class="pa-part-val"><span class="pa-part-val-num">{value}</span></span>'
+        "</div>"
+    )
+
+
+def _player_photo_html(player: dict) -> str:
+    photo_url = player.get("photo_url")
+    if photo_url:
+        return (
+            f'<img class="pa-identity-photo" src="{html.escape(str(photo_url), quote=True)}" '
+            f'alt="{html.escape(str(player.get("player_name", "Player")))}" loading="lazy" />'
+        )
+    initials = "".join(part[0] for part in str(player.get("player_name", "?")).split()[:2]).upper()
+    return f'<div class="pa-identity-photo-placeholder">{html.escape(initials or "?")}</div>'
+
+
+def _build_player_analysis_left_card_html(
+    player: dict,
+    *,
+    origin_heatmap_b64: str | None = None,
+    xp_profile: dict | None = None,
+    label_fn,
+    tooltip_fn,
+    rank_in_group_fn,
+    fmt_pct_fn,
+    fmt_stat_fn,
+) -> str:
+    search_pos = sim.player_search_position(player)
+    group_label = sim.similarity_position_label(search_pos) if search_pos else "—"
+    badges = _xp_identity_badges_html(xp_profile)
+    badges_block = (
+        f'<div class="pa-identity-badges">{badges}</div>' if badges else ""
+    )
+
+    profile_lines = []
+    for key in pp.GENERAL_PROFILE_KEYS:
+        if key == "minutes":
+            value = _general_profile_minutes_html(player, fmt_pct_fn=fmt_pct_fn)
+        else:
+            value = _general_profile_value_html(player, key, fmt_pct_fn=fmt_pct_fn)
+        profile_lines.append(
+            _general_profile_row_html(pp.GENERAL_PROFILE_LABELS[key], value)
+        )
+    profile_html = "".join(profile_lines)
+    heatmap_block = ""
+    if origin_heatmap_b64:
+        heatmap_block = (
+            '<div class="pa-origin-heatmap-wrap">'
+            f'<img class="pa-origin-heatmap" src="data:image/png;base64,{origin_heatmap_b64}" '
+            'alt="Pass and carry origin heatmap" />'
+            "</div>"
+        )
+    body = (
+        '<p class="pa-section-label">General profile</p>'
+        f'<div class="pa-left-card-body">'
+        f'<div class="pa-participation-compact">{profile_html}</div>'
+        f"{heatmap_block}"
+        "</div>"
+    )
+
+    return (
+        '<div class="player-card pa-identity-card">'
+        '<div class="pa-identity-top">'
+        '<div class="pa-identity-header">'
+        f'<div class="pa-identity-photo-wrap">{_player_photo_html(player)}</div>'
+        '<div class="pa-identity-head-text">'
+        f'<h2 class="pa-identity-title">{html.escape(str(player.get("player_name", "—")))}</h2>'
+        f'<p class="pa-identity-meta">{html.escape(str(player.get("team", "—")))} · '
+        f'{html.escape(str(player.get("position", "—")))} · '
+        f'{html.escape(group_label)}</p>'
+        f'<span class="pa-identity-chip">{html.escape(APP_LEAGUE)}</span>'
+        f"{badges_block}"
+        "</div>"
+        "</div>"
+        "</div>"
+        '<div class="pa-identity-divider"></div>'
+        f"{body}"
+        "</div>"
+    )
+
+
+def _xp_metric_ranks_dict(xp_profile: dict | None) -> dict:
+    if not xp_profile:
+        return {}
+    ranks: dict[str, dict[str, int]] = {}
+    for metric in xe.XP_POSITION_RANK_METRICS:
+        rank = xp_profile.get(f"{metric}_rank_in_group")
+        total = xp_profile.get(f"{metric}_rank_pool_in_group")
+        if rank and total:
+            ranks[metric] = {"rank": int(rank), "total": int(total)}
+    return ranks
+
+
+XP_PASSING_SECTION_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = tuple(
+    (f"pa_{title.lower().replace(' ', '_').replace('ç', 'c').replace('ã', 'a')}", title, "", keys)
+    for title, keys in xstats.XP_PLAYER_ANALYSIS_BLOCKS
+)
+
+
+def _xp_metric_label(key: str) -> str:
+    return xstats.stats_metric_label(key)
+
+
+def _xp_stat_display(profile: dict, key: str) -> str:
+    return xstats.format_stats_value(key, profile.get(key))
+
+
+def _xp_stat_numeric_value(profile: dict, key: str) -> float | None:
+    val = profile.get(key)
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+_ARCHETYPE_STYLE_CLASS: dict[str, str] = {
+    "build": "pa-archetype-build",
+    "vertical": "pa-archetype-vertical",
+    "carry": "pa-archetype-carry",
+    "attack": "pa-archetype-attack",
+    "link": "pa-archetype-link",
+    "reference": "pa-archetype-reference",
+    "elite": "pa-archetype-elite",
+    "impacto": "pa-archetype-impacto",
+}
+
+
+def _player_archetype_block_html(player: dict | None) -> str:
+    profile = player or {}
+    label = profile.get("player_archetype_label")
+    if not label:
+        return (
+            '<p class="pa-pillar-group-label">Archetype</p>'
+            '<div class="pa-pillar-group pa-pillar-group-empty">'
+            '<p class="pa-placeholder-note">Unavailable</p>'
+            "</div>"
+        )
+    style = str(profile.get("player_archetype_style") or "link")
+    style_class = _ARCHETYPE_STYLE_CLASS.get(style, "pa-archetype-link")
+    icon = str(profile.get("player_archetype_icon") or "fa-user")
+    description = str(profile.get("player_archetype_description") or "")
+    return (
+        '<p class="pa-pillar-group-label">Archetype</p>'
+        '<div class="pa-pillar-group pa-archetype-panel">'
+        '<div class="pa-archetype-row">'
+        '<span class="pa-archetype-tip">'
+        f'<span class="pa-archetype-pill {style_class}">'
+        f'<i class="fa-solid {html.escape(icon)}" aria-hidden="true"></i>'
+        f"{html.escape(str(label))}"
+        "</span>"
+        f'<span class="pa-archetype-tipbox">{html.escape(description)}</span>'
+        "</span>"
+        "</div>"
+        "</div>"
+    )
+
+
+def _xp_archetype_radar_b64(xp_profile: dict | None) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+    if not xp_profile:
+        return ""
+
+    labels = [xstats.XP_ARCHETYPE_RADAR_LABELS[key] for key in xstats.XP_ARCHETYPE_RADAR_KEYS]
+    values = [
+        float(xp_profile.get(key) or 6.0)
+        for key in xstats.XP_ARCHETYPE_RADAR_KEYS
+    ]
+    if len(values) < 3:
+        return ""
+
+    count = len(values)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False).tolist()
+    values_closed = values + [values[0]]
+    angles_closed = np.append(angles, angles[0])
+
+    fig, ax = plt.subplots(
+        figsize=(5.25, 5.25),
+        subplot_kw={"polar": True},
+        facecolor="none",
+    )
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.fill(angles_closed, values_closed, color=PA_XP_RADAR_FILL_COLOR, alpha=0.22, zorder=2)
+    ax.plot(
+        angles_closed,
+        values_closed,
+        color=PA_XP_RADAR_LINE_COLOR,
+        linewidth=2.8,
+        linestyle="-",
+        alpha=0.96,
+        zorder=4,
+    )
+    for angle, value in zip(angles, values):
+        ax.plot(
+            angle,
+            value,
+            marker="o",
+            color=PA_XP_RADAR_LINE_COLOR,
+            markersize=7.0,
+            markeredgecolor="#0f172a",
+            markeredgewidth=0.8,
+            alpha=0.96,
+            zorder=5,
+        )
+    ax.set_ylim(3.0, 9.0)
+    ax.set_yticks([4, 5, 6, 7, 8])
+    ax.set_yticklabels([])
+    ax.set_xticks(angles)
+    ax.set_xticklabels(labels, fontsize=10.5, fontweight=600, linespacing=0.9, color="#e2e8f0")
+    ax.tick_params(axis="x", pad=18)
+    ax.grid(color="#334155", alpha=0.42, linewidth=0.65)
+    ax.spines["polar"].set_color("#334155")
+    ax.spines["polar"].set_alpha(0.55)
+    fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=220, transparent=True, bbox_inches="tight", pad_inches=0.03)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _xp_profile_display_pct(xp_profile: dict, display_key: str) -> float | None:
+    if not xp_profile.get("xp_profile_bars_eligible", True):
+        return None
+    try:
+        score = float(xp_profile.get(display_key))
+    except (TypeError, ValueError):
+        return None
+    if score != score:  # NaN guard without numpy
+        return None
+    return max(0.0, min(100.0, (score - 3.0) / 6.0 * 100.0))
+
+
+def _xp_gradient_bar_tier(pct: float) -> str:
+    if pct >= 72.0:
+        return "hot"
+    if pct >= 45.0:
+        return "warm"
+    return "cool"
+
+
+def _xp_gradient_bar_metric_rank_html(xp_profile: dict, key: str) -> str:
+    rank = xp_profile.get(f"{key}_rank_in_group")
+    total = xp_profile.get(f"{key}_rank_pool_in_group")
+    if not rank or not total:
+        return ""
+    group = _pa_field_group_label(xp_profile)
+    return (
+        '<span class="pa-xp-gradient-bar-tip-rank">'
+        f"#{int(rank)} of {int(total)} · {html.escape(group)}"
+        "</span>"
+    )
+
+
+_GRADIENT_BAR_TOOLTIP_NO_RANK_KEYS: frozenset[str] = frozenset({
+    "xp_activity_display",
+    "xp_edge_display",
+})
+
+
+def _xp_gradient_bar_tooltip_html(xp_profile: dict, display_key: str) -> str:
+    title = xstats.XP_PROFILE_BAR_LABELS.get(display_key, display_key)
+    metric_keys = xstats.XP_PROFILE_BAR_METRICS.get(display_key, ())
+    summary = xstats.XP_PROFILE_BAR_TOOLTIPS.get(display_key, "")
+    show_rank = display_key not in _GRADIENT_BAR_TOOLTIP_NO_RANK_KEYS
+    lines = "".join(
+        '<span class="pa-xp-gradient-bar-tip-line">'
+        '<span class="pa-xp-gradient-bar-tip-metric">'
+        f'{html.escape(xstats.pa_stats_metric_label(key))}: '
+        f'{html.escape(xstats.format_pa_stats_value(key, xp_profile.get(key)))}'
+        "</span>"
+        f"{_xp_gradient_bar_metric_rank_html(xp_profile, key) if show_rank else ''}"
+        "</span>"
+        for key in metric_keys
+    )
+    summary_html = (
+        f'<span class="pa-xp-gradient-bar-tip-summary">{html.escape(summary)}</span>'
+        if summary
+        else ""
+    )
+    return (
+        f'<span class="pa-xp-gradient-bar-tip-title">{html.escape(title)}</span>'
+        f"{summary_html}"
+        f"{lines}"
+    )
+
+
+def _xp_gradient_bar_tooltip_plain(xp_profile: dict, display_key: str) -> str:
+    """Plain-text tooltip used as a native title fallback."""
+    title = xstats.XP_PROFILE_BAR_LABELS.get(display_key, display_key)
+    parts: list[str] = [str(title)]
+    for key in xstats.XP_PROFILE_BAR_METRICS.get(display_key, ()):
+        label = xstats.pa_stats_metric_label(key)
+        value = xstats.format_pa_stats_value(key, xp_profile.get(key))
+        rank = xp_profile.get(f"{key}_rank_in_group")
+        total = xp_profile.get(f"{key}_rank_pool_in_group")
+        if rank and total:
+            parts.append(f"{label}: {value} (#{int(rank)} of {int(total)})")
+        else:
+            parts.append(f"{label}: {value}")
+    return " · ".join(parts)
+
+
+_XP_BAR_TICKS_HTML = (
+    '<div class="pa-xp-gradient-bar-ticks" aria-hidden="true">'
+    "<span></span><span></span><span></span><span></span>"
+    "</div>"
+)
+
+
+def _xp_profile_pillar_head_html(display_key: str) -> str:
+    label = xstats.XP_PROFILE_BAR_LABELS.get(display_key, display_key)
+    icon = XP_PROFILE_BAR_ICONS.get(display_key, "fa-circle-dot")
+    weight = XP_PROFILE_BAR_WEIGHTS.get(display_key)
+    weight_html = ""
+    if weight:
+        weight_txt = f"{float(weight) * 100:.0f}%"
+        weight_html = (
+            f'<span class="pa-xp-pillar-weight" title="Weight in the xP grade">'
+            f"{html.escape(weight_txt)}</span>"
+        )
+    return (
+        '<div class="pa-xp-pillar-head">'
+        '<span class="pa-xp-pillar-icon">'
+        f'<i class="fa-solid {html.escape(icon)}" aria-hidden="true"></i>'
+        "</span>"
+        f'<span class="pa-xp-pillar-label">{html.escape(label)}</span>'
+        f"{weight_html}"
+        "</div>"
+    )
+
+
+def _xp_profile_pillar_html(display_key: str, xp_profile: dict) -> str:
+    """One xP pillar: icon + label + weight above a hoverable gradient bar."""
+    head_html = _xp_profile_pillar_head_html(display_key)
+    pct = _xp_profile_display_pct(xp_profile, display_key)
+    if pct is None:
+        bar_html = (
+            '<div class="pa-xp-gradient-bar-shell">'
+            '<div class="pa-xp-gradient-bar-track pa-xp-gradient-bar-empty"></div>'
+            f"{_XP_BAR_TICKS_HTML}"
+            "</div>"
+        )
+        return f'<div class="pa-xp-pillar">{head_html}{bar_html}</div>'
+
+    tier = _xp_gradient_bar_tier(pct)
+    plain = html.escape(_xp_gradient_bar_tooltip_plain(xp_profile, display_key), quote=True)
+    bar_html = (
+        f'<div class="pa-xp-gradient-bar-shell pa-xp-gradient-bar-tier-{tier} pa-xp-pillar-bar" '
+        f'tabindex="0" role="img" aria-label="{plain}" title="{plain}">'
+        '<div class="pa-xp-gradient-bar-track">'
+        '<span class="pa-xp-gradient-bar-clip">'
+        f'<span class="pa-xp-gradient-bar-glow" style="left:{pct:.1f}%"></span>'
+        "</span>"
+        f'<span class="pa-xp-gradient-bar-marker-only" style="left:{pct:.1f}%">'
+        '<span class="pa-xp-gradient-bar-marker"></span>'
+        "</span>"
+        "</div>"
+        f"{_XP_BAR_TICKS_HTML}"
+        '<span class="pa-xp-gradient-bar-tipbox">'
+        f"{_xp_gradient_bar_tooltip_html(xp_profile, display_key)}"
+        "</span>"
+        "</div>"
+    )
+    return f'<div class="pa-xp-pillar">{head_html}{bar_html}</div>'
+
+
+def _xp_profile_ineligibility_note(xp_profile: dict) -> str:
+    min_pct = float(xp_profile.get("xp_profile_min_minutes_pct") or xstats.XP_PROFILE_MIN_MINUTES_PCT)
+    reason = str(xp_profile.get("xp_profile_ineligible_reason") or "")
+    if reason in {"top_pool_cutoff", "top100_cutoff"}:
+        pool_size = int(xp_profile.get("xp_profile_top_pool_size") or xstats.XP_PROFILE_TOP_PASS_POOL_SIZE)
+        min_passes = xp_profile.get("xp_profile_min_passes")
+        passes_txt = f"{float(min_passes):.0f}" if min_passes is not None else "—"
+        return (
+            f"xP Profile unavailable — requires &gt;{min_pct * 100:.0f}% of minutes and "
+            f"being among the {pool_size} with the most passes at the position "
+            f"(min. {passes_txt} passes)."
+        )
+    p30_min = xp_profile.get("xp_profile_p30_min_passes", xp_profile.get("xp_profile_min_passes"))
+    passes_txt = f"{float(p30_min):.0f}" if p30_min is not None else "P30"
+    return (
+        f"xP Profile unavailable — requires &gt;{min_pct * 100:.0f}% of minutes "
+        f"and ≥{passes_txt} completed passes (P{xstats.XP_PROFILE_BAR_PASS_PERCENTILE} at the position)."
+    )
+
+
+def _xp_profile_bars_html(xp_profile: dict | None) -> str:
+    if not xp_profile:
+        return ""
+    if not xp_profile.get("xp_profile_bars_eligible", True):
+        note = (
+            '<p class="pa-xp-profile-eligibility-note">'
+            f"{_xp_profile_ineligibility_note(xp_profile)}"
+            "</p>"
+        )
+        return f'<div class="pa-xp-profile-bars pa-xp-profile-bars-ineligible">{note}</div>'
+    rows = "".join(
+        _xp_profile_pillar_html(key, xp_profile)
+        for key in XP_PROFILE_BAR_KEYS_RENDER
+    )
+    return f'<div class="pa-xp-profile-bars">{rows}</div>'
+
+
+def _xp_index_row_inner_html(
+    name: str,
+    value: str,
+    *,
+    icon: str = "",
+    trailing: str = "",
+) -> str:
+    icon_html = (
+        f'<span class="pa-xp-index-row-icon"><i class="fa-solid {html.escape(icon)}"></i></span>'
+        if icon
+        else ""
+    )
+    return (
+        f"{icon_html}"
+        f'<span class="pa-xp-index-row-name">{html.escape(name)}</span>'
+        '<span class="pa-xp-index-row-sep" aria-hidden="true"></span>'
+        f'<span class="pa-xp-index-row-val">{html.escape(value)}</span>'
+        f"{trailing}"
+    )
+
+
+def _xp_index_row_html(
+    name: str,
+    value: str,
+    *,
+    row_class: str,
+    tip: str = "",
+    icon: str = "",
+    tipbox: str = "",
+    trailing: str = "",
+) -> str:
+    title = f' title="{html.escape(tip, quote=True)}"' if tip else ""
+    tip_cls = " pa-xp-index-row-hastip" if tipbox else ""
+    tipbox_html = (
+        f'<span class="pa-xp-index-tipbox">{tipbox}</span>' if tipbox else ""
+    )
+    return (
+        f'<div class="pa-xp-index-row {row_class}{tip_cls}"{title}>'
+        f"{_xp_index_row_inner_html(name, value, icon=icon, trailing=trailing)}"
+        f"{tipbox_html}"
+        "</div>"
+    )
+
+
+def _xp_index_tip_lines_html(
+    xp_profile: dict,
+    keys: tuple[str, ...],
+    *,
+    show_rank: bool = True,
+) -> str:
+    """Metric lines (label, value, optional rank) for a rich index tooltip."""
+    lines: list[str] = []
+    for key in keys:
+        value = xp_profile.get(key)
+        if value is None:
+            continue
+        rank_html = ""
+        if show_rank:
+            rank = xp_profile.get(f"{key}_rank_in_group")
+            total = xp_profile.get(f"{key}_rank_pool_in_group")
+            rank_html = (
+                f'<span class="pa-xp-index-tip-rank">#{int(rank)} of {int(total)}</span>'
+                if rank and total
+                else ""
+            )
+        lines.append(
+            '<span class="pa-xp-index-tip-line">'
+            '<span class="pa-xp-index-tip-metric">'
+            f"{html.escape(xstats.pa_stats_metric_label(key))}: "
+            f"{html.escape(xstats.format_pa_stats_value(key, value))}"
+            "</span>"
+            f"{rank_html}"
+            "</span>"
+        )
+    return "".join(lines)
+
+
+_IMPACT_PASS_TIP_KEYS: tuple[str, ...] = (
+    "threat_passes_p90",
+    "xp_m4_threat_passes_p90",
+    "xp_m4_per_threat_pass",
+    "xp_m4_threat_rate",
+    "xp_m4_threat_passes",
+)
+
+
+def _rank_tier_class(xp_profile: dict, key: str) -> str:
+    """Map a metric's rank inside the position group to the index-row tier colours."""
+    rank = xp_profile.get(f"{key}_rank_in_group")
+    total = xp_profile.get(f"{key}_rank_pool_in_group")
+    if not rank or not total:
+        return "pa-xp-index-row-mid"
+    share = float(rank) / float(total)
+    if share <= 0.25:
+        return "pa-xp-index-row-earned"
+    if share >= 0.67:
+        return "pa-xp-index-row-below"
+    return "pa-xp-index-row-mid"
+
+
+def _xp_impact_pass_row_html(xp_profile: dict) -> str:
+    """I.P. row: volume per game plus a tooltip with the underlying Impact Pass numbers."""
+    per_game = xp_profile.get("threat_passes_p90")
+    value = f"{float(per_game):.1f} / game" if per_game is not None else "—"
+    row_class = f"pa-xp-index-row-badge {_rank_tier_class(xp_profile, 'threat_passes_p90')}"
+    summary = xstats.pa_stats_metric_tooltip("threat_passes_p90")
+    summary_html = (
+        f'<span class="pa-xp-index-tip-summary">{html.escape(summary)}</span>'
+        if summary
+        else ""
+    )
+    tipbox = (
+        f'<span class="pa-xp-index-tip-title">{html.escape(IMPACT_PASS_ABBR)} · Impact Passes</span>'
+        f"{summary_html}"
+        f"{_xp_index_tip_lines_html(xp_profile, _IMPACT_PASS_TIP_KEYS)}"
+    )
+    return _xp_index_row_html(
+        IMPACT_PASS_ABBR,
+        value,
+        row_class=row_class,
+        icon="fa-crosshairs",
+        tipbox=tipbox,
+    )
+
+
+_ROUND_CHART_W = 252.0
+_ROUND_CHART_H = 88.0
+_ROUND_CHART_PAD_X = 8.0
+_ROUND_CHART_PAD_Y = 10.0
+
+
+def _round_production_series(
+    xp_profile: dict,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> list[dict]:
+    raw = xp_profile.get(XP_ROUND_SERIES_KEY)
+    if not raw and xp_passes_df is not None and not xp_passes_df.empty:
+        compute_fn = getattr(xstats, "round_production_series", None)
+        if compute_fn is not None:
+            scored = xp_passes_df[xp_passes_df["is_won"] & xp_passes_df["has_end"]]
+            if not scored.empty:
+                raw = compute_fn(scored)
+    return [dict(point) for point in (raw or ())]
+
+
+def _round_point_title(point: dict) -> str:
+    parts = [f"Round {int(point.get('round') or 0)}"]
+    opponent = str(point.get("opponent") or "").strip()
+    if opponent:
+        parts.append(f"vs {opponent}")
+    date = str(point.get("date") or "").strip()
+    if date:
+        parts.append(date)
+    parts.append(f"xP {float(point.get('xp') or 0.0):.2f}")
+    parts.append(f"{int(point.get('impact') or 0)} {IMPACT_PASS_ABBR}")
+    parts.append(f"{int(point.get('passes') or 0)} passes")
+    return " · ".join(parts)
+
+
+_CONSISTENCY_TIP_KEYS: tuple[str, ...] = (
+    "xp_game_std_adj_score",
+    "xp_game_mean",
+    "xp_games_above_median_pct",
+)
+
+
+def _xp_consistency_row_html(
+    xp_profile: dict,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> str:
+    """Consistency row with hover tooltip (like I.P.) instead of an expandable panel."""
+    tier = xp_profile.get("xp_idx_consistency_tier")
+    if not tier:
+        return ""
+    tier_label = xstats.XP_INDEX_TIER_LABELS.get(tier, "—")
+    icon = xstats.XP_INDEX_ICONS.get("xp_idx_consistency", "fa-wave-square")
+    row_class = (
+        "pa-xp-index-row-badge pa-xp-index-row-earned"
+        if tier == "above"
+        else f"pa-xp-index-row-{tier}"
+    )
+    summary = xstats.XP_INDEX_TOOLTIPS.get("xp_idx_consistency", "")
+    summary_html = (
+        f'<span class="pa-xp-index-tip-summary">{html.escape(summary)}</span>'
+        if summary
+        else ""
+    )
+    chart_html = _round_production_chart_html(xp_profile, xp_passes_df, compact=True)
+    tipbox = (
+        '<span class="pa-xp-index-tip-title">Consistency</span>'
+        f"{summary_html}"
+        f"{_xp_index_tip_lines_html(xp_profile, _CONSISTENCY_TIP_KEYS, show_rank=False)}"
+        f'<span class="pa-xp-index-tip-chart">{chart_html}</span>'
+    )
+    return _xp_index_row_html(
+        "Consistency",
+        tier_label,
+        row_class=row_class,
+        icon=icon,
+        tipbox=tipbox,
+    )
+
+
+def _round_production_chart_html(
+    xp_profile: dict,
+    xp_passes_df: pd.DataFrame | None = None,
+    *,
+    compact: bool = False,
+) -> str:
+    """Inline SVG line chart of xP produced per round, with the season mean as reference."""
+    series = _round_production_series(xp_profile, xp_passes_df)
+    if len(series) < 3:
+        return (
+            '<p class="pa-round-chart-empty">'
+            "Not enough matches to plot round-by-round production."
+            "</p>"
+        )
+    values = [float(point.get("xp") or 0.0) for point in series]
+    count = len(values)
+    lo = min(values)
+    hi = max(values)
+    span = (hi - lo) if hi > lo else max(hi, 1.0)
+    mean = sum(values) / count
+    chart_h = 52.0 if compact else _ROUND_CHART_H
+    pad_x = 6.0 if compact else _ROUND_CHART_PAD_X
+    pad_y = 7.0 if compact else _ROUND_CHART_PAD_Y
+    inner_w = _ROUND_CHART_W - 2 * pad_x
+    inner_h = chart_h - 2 * pad_y
+
+    def pos_x(index: int) -> float:
+        return pad_x + inner_w * index / (count - 1)
+
+    def pos_y(value: float) -> float:
+        return pad_y + inner_h * (1.0 - (value - lo) / span)
+
+    points = " ".join(f"{pos_x(i):.1f},{pos_y(v):.1f}" for i, v in enumerate(values))
+    mean_y = pos_y(mean)
+    dots = "".join(
+        f'<circle class="pa-round-chart-dot" '
+        f'cx="{pos_x(i):.1f}" cy="{pos_y(v):.1f}" r="{1.4 if compact else 1.6}">'
+        f"<title>{html.escape(_round_point_title(series[i]))}</title>"
+        "</circle>"
+        for i, v in enumerate(values)
+    )
+    wrap_cls = "pa-round-chart-wrap pa-round-chart-wrap-compact" if compact else "pa-round-chart-wrap"
+    legend_html = (
+        f'<span class="pa-round-chart-legend-item pa-round-chart-legend-mean">μ {mean:.2f} xP</span>'
+        if compact
+        else (
+            f'<span class="pa-round-chart-legend-item pa-round-chart-legend-mean">μ {mean:.2f} xP</span>'
+            f'<span class="pa-round-chart-legend-item">{count} games</span>'
+        )
+    )
+    return (
+        f'<div class="{wrap_cls}">'
+        f'<svg class="pa-round-chart{" pa-round-chart-compact" if compact else ""}" '
+        f'viewBox="0 0 {_ROUND_CHART_W:.0f} {chart_h:.0f}" '
+        'role="img" preserveAspectRatio="none" '
+        f'aria-label="xP per game across {count} matches">'
+        f'<line class="pa-round-chart-mean" x1="{pad_x:.1f}" y1="{mean_y:.1f}" '
+        f'x2="{_ROUND_CHART_W - pad_x:.1f}" y2="{mean_y:.1f}"></line>'
+        f'<polyline class="pa-round-chart-line" points="{points}"></polyline>'
+        f"{dots}"
+        "</svg>"
+        f'<div class="pa-round-chart-legend">{legend_html}</div>'
+        "</div>"
+    )
+
+
+def _xp_index_boxes_html(
+    xp_profile: dict | None,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> str:
+    if not xp_profile or not xp_profile.get("xp_profile_bars_eligible", True):
+        return ""
+    rows: list[str] = [
+        _xp_consistency_row_html(xp_profile, xp_passes_df),
+        _xp_impact_pass_row_html(xp_profile),
+    ]
+    rows = [row for row in rows if row]
+    if not rows:
+        return ""
+    return (
+        '<div class="pa-xp-index-wrap">'
+        '<div class="pa-xp-index-title">xP Indices</div>'
+        f'<div class="pa-xp-index-list">{"".join(rows)}</div>'
+        "</div>"
+    )
+
+
+def _pa_pass_length_card_html(xp_profile: dict | None) -> str:
+    """Bar comparing the player's long-pass share against the peer average at center."""
+    if not xp_profile:
+        return ""
+    share = xp_profile.get("long_pass_share_pct")
+    if share is None:
+        return ""
+    share = float(share)
+    short_share = 100.0 - share
+    peer_avg = xp_profile.get("long_pass_share_peer_avg_pct")
+    peer_count = int(xp_profile.get("long_pass_share_peer_count") or 0)
+    short_label = xstats.DISTANCE_BAND_LABELS.get("short", "≤30m")
+    long_label = xstats.DISTANCE_BAND_LABELS.get("long", ">30m")
+
+    delta_html = ""
+    center_marker = ""
+    player_marker = ""
+    foot = (
+        '<p class="pa-pass-mix-foot">Peer average unavailable for this position.</p>'
+    )
+    if peer_avg is not None:
+        peer_avg = float(peer_avg)
+        delta = share - peer_avg
+        delta_cls = "up" if delta >= 0 else "down"
+        sign = "+" if delta >= 0 else "−"
+        delta_html = (
+            f'<span class="pa-pass-mix-delta pa-pass-mix-delta-{delta_cls}" '
+            f'title="Difference against the midfielder peer average">'
+            f"{sign}{abs(delta):.1f} pp</span>"
+        )
+        half_span = float(xp_profile.get("long_pass_share_peer_span_pp") or 0.0)
+        if half_span <= 0:
+            half_span = max(3.5, min(peer_avg, 100.0 - peer_avg) * 0.85)
+        marker_pos = 50.0 + (share - peer_avg) / half_span * 50.0
+        marker_pos = max(3.0, min(97.0, marker_pos))
+        center_marker = (
+            f'<span class="pa-pass-mix-center" '
+            f'title="Midfielder average long share: {peer_avg:.1f}%"></span>'
+        )
+        player_marker = (
+            f'<span class="pa-pass-mix-marker" style="left:{marker_pos:.1f}%" '
+            f'title="Player long share: {share:.1f}%"></span>'
+        )
+        pctile = xp_profile.get("long_pass_share_pctile")
+        pctile_txt = f" · P{float(pctile):.0f}" if pctile is not None else ""
+        foot = (
+            '<p class="pa-pass-mix-foot">'
+            f"Center = midfielder avg ({peer_avg:.1f}% long, {peer_count} players)"
+            f"{html.escape(pctile_txt)}"
+            "</p>"
+        )
+    else:
+        marker_pos = max(4.0, min(96.0, share))
+        player_marker = (
+            f'<span class="pa-pass-mix-marker" style="left:{marker_pos:.1f}%" '
+            f'title="Player long share: {share:.1f}%"></span>'
+        )
+
+    return (
+        '<div class="player-card pa-pass-mix-card">'
+        '<div class="pa-pass-mix-head">'
+        '<span class="pa-pass-mix-icon">'
+        '<i class="fa-solid fa-ruler-horizontal" aria-hidden="true"></i>'
+        "</span>"
+        '<span class="pa-pass-mix-title">Pass Length Mix</span>'
+        f"{delta_html}"
+        "</div>"
+        '<div class="pa-pass-mix-track">'
+        f"{center_marker}"
+        f"{player_marker}"
+        "</div>"
+        '<div class="pa-pass-mix-axis">'
+        f'<span class="pa-pass-mix-axis-short">Short {html.escape(short_label)}</span>'
+        f'<span class="pa-pass-mix-axis-long">Long {html.escape(long_label)}</span>'
+        "</div>"
+        '<div class="pa-pass-mix-legend">'
+        '<span class="pa-pass-mix-legend-item pa-pass-mix-legend-short">'
+        f"<strong>{short_share:.1f}%</strong> short</span>"
+        '<span class="pa-pass-mix-legend-item pa-pass-mix-legend-long">'
+        f"<strong>{share:.1f}%</strong> long</span>"
+        "</div>"
+        f"{foot}"
+        "</div>"
+    )
+
+
+def _xp_profile_archetype_html(xp_profile: dict | None, *, as_title: bool = False) -> str:
+    if not xp_profile:
+        return ""
+    archetype = xp_profile.get("xp_profile_archetype")
+    if not archetype:
+        return ""
+    label = str(
+        xp_profile.get("xp_profile_archetype_label")
+        or xstats.XP_PROFILE_ARCHETYPE_LABELS.get(str(archetype), archetype)
+    )
+    description = str(
+        xp_profile.get("xp_profile_archetype_description")
+        or xstats.XP_PROFILE_ARCHETYPE_DESCRIPTIONS.get(str(archetype), "")
+    )
+    style = xstats.XP_PROFILE_ARCHETYPE_STYLES.get(str(archetype), "link")
+    style_class = _ARCHETYPE_STYLE_CLASS.get(style, "pa-archetype-link")
+    icon = xstats.XP_PROFILE_ARCHETYPE_ICONS.get(str(archetype), "fa-chart-pie")
+    wrapper_class = (
+        "pa-xp-profile-archetype-title" if as_title else "pa-xp-profile-archetype"
+    )
+    return (
+        f'<div class="{wrapper_class}">'
+        '<span class="pa-archetype-tip">'
+        f'<span class="pa-archetype-pill {style_class}">'
+        f'<i class="fa-solid {html.escape(icon)}" aria-hidden="true"></i>'
+        f"{html.escape(label)}"
+        "</span>"
+        f'<span class="pa-archetype-tipbox">{html.escape(description)}</span>'
+        "</span>"
+        "</div>"
+    )
+
+
+def _xp_profile_score_column_html(
+    xp_profile: dict | None,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> str:
+    if not xp_profile:
+        return ""
+    bars_html = _xp_profile_bars_html(xp_profile)
+    index_html = _xp_index_boxes_html(xp_profile, xp_passes_df)
+    return (
+        '<div class="player-card pa-xp-profile-card">'
+        '<p class="pa-xp-profile-title">xP Profile</p>'
+        f"{bars_html}"
+        f"{index_html}"
+        "</div>"
+    )
+
+
+def _player_analysis_score_stack_html(
+    player: dict,
+    xp_profile: dict | None,
+    metric_ranks: dict,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> str:
+    rating_panel = _player_analysis_rating_panel_html(player, metric_ranks, xp_profile)
+    profile_html = _xp_profile_score_column_html(xp_profile, xp_passes_df)
+    pass_mix_html = _pa_pass_length_card_html(xp_profile)
+    return (
+        '<div class="pa-score-stack">'
+        f"{rating_panel}"
+        f"{profile_html}"
+        f"{pass_mix_html}"
+        "</div>"
+    )
+
+
+def _pa_xp_metric_line_html(profile: dict, key: str, metric_ranks: dict) -> str:
+    return _metric_line_html(
+        xstats.pa_stats_metric_label(key),
+        key,
+        xstats.format_pa_stats_value(key, profile.get(key)),
+        metric_ranks,
+        show_rank=True,
+        label_fn=xstats.pa_stats_metric_label,
+        tooltip_fn=xstats.pa_stats_metric_tooltip,
+        rank_in_group_fn=_xp_rank_in_group_label,
+    )
+
+
+def _pa_xp_section_panel_html(
+    profile: dict,
+    section_title: str,
+    keys: tuple[str, ...],
+) -> str:
+    metric_ranks = _xp_stats_metric_ranks_dict(profile, keys)
+    lines = "".join(_pa_xp_metric_line_html(profile, key, metric_ranks) for key in keys)
+    return (
+        '<div class="pa-xp-section-panel">'
+        f'<div class="pa-xp-section-title">{html.escape(section_title)}</div>'
+        f'<div class="pa-xp-section-body">{lines}</div>'
+        "</div>"
+    )
+
+
+def _pa_xp_section_accordion_html(
+    profile: dict,
+    section_title: str,
+    keys: tuple[str, ...],
+    *,
+    accordion_name: str = "pa-pass-xp",
+    open: bool = False,
+) -> str:
+    metric_ranks = _xp_stats_metric_ranks_dict(profile, keys)
+    lines = "".join(_stats_metric_line_html(profile, key, metric_ranks) for key in keys)
+    open_attr = " open" if open else ""
+    return (
+        f'<details class="grade-accordion" name="{html.escape(accordion_name)}"{open_attr}>'
+        "<summary>"
+        '<i class="fa-solid fa-chevron-right grade-arrow" aria-hidden="true"></i>'
+        f"{_stats_section_summary_html(section_title)}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
+    )
+
+
+def _xp_rank_in_group_label(rank: int, position_group: str | None) -> str:
+    group = position_group_label(str(position_group or "—"))
+    return f"#{rank} in {group}"
+
+
+def _xp_section_metric_avg_rank_bar_html(xp_profile: dict, keys: tuple[str, ...]) -> str:
+    metric_ranks = _xp_metric_ranks_dict(xp_profile)
+    scores: list[float] = []
+    for key in keys:
+        info = metric_ranks.get(key)
+        if not info:
+            continue
+        rank = int(info.get("rank") or 0)
+        total = int(info.get("total") or 0)
+        if rank > 0 and total > 0:
+            scores.append(rank_to_display_score(rank, total))
+    if not scores:
+        return ""
+    avg_score = sum(scores) / len(scores)
+    color = score_display_color(avg_score)
+    width_pct = max(6.0, min(100.0, (avg_score - 3.0) / 6.0 * 100.0))
+    return (
+        f'<span class="rank-tip">'
+        f'<span class="rank-bar">'
+        f'<span class="rank-bar-fill" style="width:{width_pct:.0f}%;background:{color}"></span>'
+        f"</span>"
+        f'<span class="rank-tipbox">avg {avg_score:.1f}</span>'
+        f"</span>"
+    )
+
+
+def _xp_section_grade_summary_bits(
+    xp_profile: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...] = (),
+    *,
+    show_section_bar: bool = False,
+) -> str:
+    _ = section_key
+    bar_html = ""
+    if show_section_bar and keys:
+        bar_html = _xp_section_metric_avg_rank_bar_html(xp_profile, keys)
+    title_row = (
+        f'<div class="grade-card-title-row">'
+        f'<div class="grade-card-title">{html.escape(title)}</div>'
+        f"{bar_html}"
+        f"</div>"
+    )
+    return (
+        f'<div class="grade-summary-main">'
+        f'<div class="grade-summary-top">'
+        f"{title_row}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _xp_section_grade_body_html(xp_profile: dict, keys: tuple[str, ...]) -> str:
+    metric_ranks = _xp_metric_ranks_dict(xp_profile)
+    return "".join(
+        _metric_line_html(
+            _xp_metric_label(key),
+            key,
+            _xp_stat_display(xp_profile, key),
+            metric_ranks,
+            show_rank=True,
+            label_fn=_xp_metric_label,
+            tooltip_fn=lambda _key: "",
+        )
+        for key in keys
+    )
+
+
+def _xp_section_grade_accordion_html(
+    xp_profile: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...],
+    *,
+    open: bool = False,
+    show_section_bar: bool = True,
+    accordion_name: str | None = None,
+) -> str:
+    summary_main = _xp_section_grade_summary_bits(
+        xp_profile,
+        section_key,
+        title,
+        keys,
+        show_section_bar=show_section_bar,
+    )
+    lines = _xp_section_grade_body_html(xp_profile, keys)
+    open_attr = " open" if open else ""
+    name_attr = f' name="{html.escape(accordion_name)}"' if accordion_name else ""
+    return (
+        f'<details class="grade-accordion"{name_attr}{open_attr}>'
+        "<summary>"
+        '<i class="fa-solid fa-chevron-right grade-arrow" aria-hidden="true"></i>'
+        f"{summary_main}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
+    )
+
+
+XP_PA_REGULAR_STAT_KEYS: tuple[str, ...] = (
+    "passes_total",
+    "pass_completion_pct",
+    "long_balls",
+    "long_pass_share_pct",
+    "long_ball_completion_pct",
+    "progressive_passes",
+    "final_third_passes",
+    "passes_to_box",
+    "key_passes",
+    "special_line_break_p90",
+    "impact_passes_p90",
+)
+
+XP_PA_REGULAR_STAT_LABELS: dict[str, str] = {
+    "passes_total": "Passes / game",
+    "pass_completion_pct": "% Passes certos",
+    "long_balls": "Long passes / game",
+    "long_pass_share_pct": "% Long passes",
+    "long_ball_completion_pct": "% Completed long passes",
+    "progressive_passes": "Progressive passes / game",
+    "final_third_passes": "Passes into final third / game",
+    "passes_to_box": "Passes into box / game",
+    "key_passes": "Key passes / game",
+    "special_line_break_p90": "Line Breaking Passes / game",
+    "impact_passes_p90": "Impact passes / game",
+}
+
+XP_PA_REGULAR_STAT_TOOLTIPS: dict[str, str] = {
+    "passes_total": "Passes attempted per 90 minutes.",
+    "pass_completion_pct": "Completed pass percentage.",
+    "long_balls": "Long passes (≥30 m) per 90 minutes.",
+    "long_pass_share_pct": "Share of completed passes that are long (distance band >30 m).",
+    "long_ball_completion_pct": "Completed long-pass percentage.",
+    "progressive_passes": (
+        "Progressive passes completed per game (p90) — Wyscout criterion: "
+        "advance ≥ 10 m toward goal, or ≥ 5 m inside the final third."
+    ),
+    "final_third_passes": (
+        "Passes completed into the final third (x ≥ 80 m) per game (p90)."
+    ),
+    "passes_to_box": "Passes completed into the box per 90 minutes.",
+    "key_passes": "Passes leading to a shot per 90 minutes.",
+    "special_line_break_p90": (
+        "Line-breaking passes per game — origin outside the outer 10% lateral bands, "
+        "destination outside the outer 15%, forward angle ≤ 50°, distance 20–30 m "
+        "(origin 30–60 m), 15–30 m (60–80 m), or 10–30 m (80–120 m)."
+    ),
+    "impact_passes_p90": (
+        f"Impact passes per game — composite xP score (45% destination value + 35% residual "
+        "+ 20% progress) in the top 7.5% for distance band, with forward progress ≥ P65."
+    ),
+}
+
+XP_PA_REGULAR_STAT_KIND: dict[str, str] = {
+    "passes_total": "p90",
+    "pass_completion_pct": "pct",
+    "long_balls": "p90",
+    "long_pass_share_pct": "pct",
+    "long_ball_completion_pct": "pct",
+    "progressive_passes": "p90",
+    "final_third_passes": "p90",
+    "passes_to_box": "p90",
+    "key_passes": "p90",
+    "special_line_break_p90": "p90",
+    "impact_passes_p90": "p90",
+}
+
+
+def _pa_simple_stat_value(value: float | int | None, kind: str) -> str:
+    if value is None:
+        return "—"
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if kind == "pct":
+        return f"{val:.1f}%"
+    if kind == "dist":
+        return f"{val:.1f} m"
+    if kind == "xp":
+        return f"{val:.3f}"
+    return f"{val:.1f}"
+
+
+def _pa_regular_stat_value(source: dict, key: str) -> str:
+    return _pa_simple_stat_value(source.get(key), XP_PA_REGULAR_STAT_KIND.get(key, "p90"))
+
+
+PA_MEDAL_GOLD_TOP = 10
+PA_MEDAL_SILVER_TOP = 20
+PA_MEDAL_BRONZE_TOP = 30
+
+
+def _pa_field_group_label(source: dict) -> str:
+    profile = str(source.get("midfield_origin_profile") or "")
+    if profile == "campo_ofensivo":
+        return "Campo ofensivo"
+    if profile == "campo_defensivo":
+        return "Campo defensivo"
+    return position_group_label(str(source.get("position_group") or "—"))
+
+
+def _pa_top_badge_html(rank_info: dict | None) -> str:
+    if not rank_info:
+        return ""
+    try:
+        rank = int(rank_info.get("rank") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if rank <= 0:
+        return ""
+    if rank <= PA_MEDAL_GOLD_TOP:
+        return (
+            '<span class="pa-top-badge pa-top-badge-gold" title="Top 10" aria-label="Top 10">'
+            '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
+        )
+    if rank <= PA_MEDAL_SILVER_TOP:
+        return (
+            '<span class="pa-top-badge pa-top-badge-silver" title="Top 20" aria-label="Top 20">'
+            '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
+        )
+    if rank <= PA_MEDAL_BRONZE_TOP:
+        return (
+            '<span class="pa-top-badge pa-top-badge-bronze" title="Top 30" aria-label="Top 30">'
+            '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
+        )
+    return ""
+
+
+def _pa_regular_stat_rank_info(
+    source: dict,
+    metric_ranks: dict,
+    key: str,
+) -> tuple[int, int] | None:
+    # Regular Stats values come from the xP profile (p90); rank must match that source.
+    rank = source.get(f"{key}_rank_in_group")
+    total = source.get(f"{key}_rank_pool_in_group")
+    if rank and total:
+        return int(rank), int(total)
+    info = metric_ranks.get(key)
+    if isinstance(info, dict) and info.get("rank") and info.get("total"):
+        return int(info["rank"]), int(info["total"])
+    return None
+
+
+def _pa_regular_stat_value_tip_html(
+    label: str,
+    value: str,
+    rank_info: tuple[int, int] | None,
+    source: dict,
+) -> str:
+    if not rank_info:
+        return f'<span class="stat-val">{html.escape(value)}</span>'
+    rank, total = rank_info
+    group = _pa_field_group_label(source)
+    plain = f"{label}: {value} · #{rank} of {total} · {group}"
+    tipbox = (
+        f'<span class="pa-regular-stat-tip-title">{html.escape(label)}</span>'
+        f'<span class="pa-regular-stat-tip-value">{html.escape(value)}</span>'
+        f'<span class="pa-regular-stat-tip-rank">#{rank} of {total} · {html.escape(group)}</span>'
+    )
+    return (
+        f'<span class="pa-regular-stat-tip" tabindex="0" title="{html.escape(plain, quote=True)}">'
+        f'<span class="stat-val">{html.escape(value)}</span>'
+        f'<span class="pa-regular-stat-tipbox">{tipbox}</span>'
+        "</span>"
+    )
+
+
+def _pa_regular_stat_line_html(source: dict, metric_ranks: dict, key: str) -> str:
+    label = XP_PA_REGULAR_STAT_LABELS.get(key, key)
+    label_html = html.escape(label)
+    value = _pa_regular_stat_value(source, key)
+    rank_info = _pa_regular_stat_rank_info(source, metric_ranks, key)
+    badge = _pa_top_badge_html(
+        {"rank": rank_info[0], "total": rank_info[1]} if rank_info else None
+    )
+    value_html = _pa_regular_stat_value_tip_html(
+        label,
+        value,
+        rank_info,
+        source,
+    )
+    value_inner = (
+        f'<span class="val-wrap">{badge}'
+        f"{value_html}</span>"
+    )
+    return (
+        '<div class="metric-line">'
+        f"<span>{label_html}</span>"
+        f'<span style="text-align:right">{value_inner}</span>'
+        "</div>"
+    )
+
+
+def _pa_regular_stats_panel_html(
+    player: dict | None,
+    xp_profile: dict | None = None,
+) -> str:
+    # xP profile owns p90 regular stats; player dict may still carry raw season totals.
+    source = {**(player or {}), **(xp_profile or {})}
+    metric_ranks = (
+        player.get("metric_ranks")
+        if isinstance((player or {}).get("metric_ranks"), dict)
+        else {}
+    )
+    lines = "".join(
+        _pa_regular_stat_line_html(source, metric_ranks, key)
+        for key in XP_PA_REGULAR_STAT_KEYS
+    )
+    return (
+        '<div class="pa-xp-section-panel">'
+        '<div class="pa-xp-section-title">Regular Stats</div>'
+        f'<div class="pa-xp-section-body">{lines}</div>'
+        "</div>"
+    )
+
+
+def _build_xp_stats_card_html(
+    xp_profile: dict | None,
+    player: dict | None = None,
+) -> str:
+    regular_html = _pa_regular_stats_panel_html(player, xp_profile)
+    return (
+        '<div class="player-card pa-pillars-card">'
+        '<div class="pa-pillars-stack"><div class="pa-pillar-group">'
+        f"{regular_html}"
+        "</div></div>"
+        "</div>"
+    )
+
+
+def _build_player_analysis_pillars_html(
+    player: dict,
+    scout_section_specs,
+    *,
+    label_fn,
+    tooltip_fn,
+    rank_in_group_fn,
+    fmt_pct_fn,
+    fmt_stat_fn,
+) -> str:
+    def _accordions_for(sections: tuple, accordion_name: str | None = None) -> str:
+        return "".join(
+            _section_grade_accordion_html(
+                player,
+                section_key,
+                title,
+                keys,
+                open=False,
+                show_section_bar=not str(section_key).endswith("distance"),
+                accordion_name=accordion_name,
+                label_fn=label_fn,
+                tooltip_fn=tooltip_fn,
+                rank_in_group_fn=rank_in_group_fn,
+                fmt_pct_fn=fmt_pct_fn,
+                fmt_stat_fn=fmt_stat_fn,
+            )
+            for section_key, title, _subtitle, keys in sections
+        )
+
+    pass_sections = tuple(s for s in scout_section_specs if str(s[0]).startswith("pass_"))
+    carry_sections = tuple(s for s in scout_section_specs if str(s[0]).startswith("carry_"))
+    groups = []
+    if pass_sections:
+        groups.append(
+            '<p class="pa-pillar-group-label">Passing</p>'
+            f'<div class="pa-pillar-group">{_accordions_for(pass_sections, "pa-pass-xstats")}</div>'
+        )
+    if carry_sections:
+        groups.append(
+            '<p class="pa-pillar-group-label">Carrying</p>'
+            f'<div class="pa-pillar-group">{_accordions_for(carry_sections, "pa-carry-xstats")}</div>'
+        )
+    return "".join(groups)
+
+
+def _build_player_analysis_layout_html(
+    player: dict,
+    *,
+    xp_profile: dict | None = None,
+    scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+    pillar_labels: dict[str, str] | None = None,
+    origin_heatmap_b64: str | None = None,
+    label_fn=pg_analyst_metric_label,
+    tooltip_fn=pg_metric_tooltip,
+    rank_in_group_fn=pg_rank_in_group_label,
+    fmt_pct_fn=pg_fmt_pct,
+    fmt_stat_fn=pg_fmt_stat_value,
+    confidence_minutes: float = RATING_CONFIDENCE_MINUTES,
+    confidence_passes: float = RATING_CONFIDENCE_PASSES,
+    rating_key: str = "progression_rating",
+    rating_slot_fn=None,
+    xp_passes_df: pd.DataFrame | None = None,
+) -> str:
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    layout_style = f"--pa-card-h: {PLAYER_ANALYSIS_CARD_HEIGHT_PX}px;"
+    score_stack = _player_analysis_score_stack_html(
+        player,
+        xp_profile,
+        metric_ranks,
+        xp_passes_df=xp_passes_df,
+    )
+    left_card = _build_player_analysis_left_card_html(
+        player,
+        origin_heatmap_b64=origin_heatmap_b64,
+        xp_profile=xp_profile,
+        label_fn=label_fn,
+        tooltip_fn=tooltip_fn,
+        rank_in_group_fn=rank_in_group_fn,
+        fmt_pct_fn=fmt_pct_fn,
+        fmt_stat_fn=fmt_stat_fn,
+    )
+    stats_card = _build_xp_stats_card_html(xp_profile, player)
+    return (
+        f'<div class="pa-layout" style="{layout_style}">'
+        f'<div class="pa-col pa-col-identity">{left_card}</div>'
+        '<div class="pa-col pa-col-score">'
+        f"{score_stack}"
+        "</div>"
+        '<div class="pa-col pa-col-pillars">'
+        f"{stats_card}"
+        "</div>"
+        "</div>"
+    )
+
+
+def render_player_analysis_profile(player: dict, **kwargs) -> None:
+    st.html(_build_player_analysis_layout_html(player, **kwargs), width="stretch")
+
+
+def _section_grade_body_html(
+    player: dict,
+    keys: tuple[str, ...],
+    *,
+    label_fn=analyst_metric_label,
+    tooltip_fn=metric_tooltip,
+    rank_in_group_fn=rank_in_group_label,
+    fmt_pct_fn=fmt_pct,
+    fmt_stat_fn=fmt_stat_value,
+) -> str:
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    return "".join(
+        _metric_line_html(
+            label_fn(key),
+            key,
+            _stat_display(player, key, fmt_pct_fn=fmt_pct_fn, fmt_stat_fn=fmt_stat_fn),
+            metric_ranks,
+            player=player,
+            show_rank=True,
+            label_fn=label_fn,
+            tooltip_fn=tooltip_fn,
+            rank_in_group_fn=rank_in_group_fn,
+        )
+        for key in keys
+    )
+
+
+def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tuple[str, str]:
+    if target_val is None or similar_val is None:
+        return "", ""
+    t = float(target_val)
+    s = float(similar_val)
+    if abs(t - s) < 0.05:
+        dot = '<span class="cmp-delta flat" title="Tie">●</span>'
+        return dot, dot
+    if t > s:
+        return (
+            '<span class="cmp-delta up" title="Above similar">▲</span>',
+            '<span class="cmp-delta down" title="Below reference">▼</span>',
+        )
+    return (
+        '<span class="cmp-delta down" title="Below similar">▼</span>',
+        '<span class="cmp-delta up" title="Above reference">▲</span>',
+    )
+
+
+def render_player_layout(player: dict, passes) -> None:
+    team_label = player.get("team", "—")
+    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
+
+    with col_maps:
+        if passes is None or passes.empty:
+            st.warning("No passes for this player.")
+        else:
+            r1c1, r1c2 = st.columns(2, gap="small")
+            with r1c1:
+                fig_completed = draw_all_completed_passes_map(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_completed, clear_figure=True, use_container_width=True)
+            with r1c2:
+                fig_dest_completed = draw_pass_destination_heatmap(
+                    passes,
+                    player["player_name"],
+                    team_label,
+                    dashboard=True,
+                    impact_only=False,
+                )
+                st.pyplot(fig_dest_completed, clear_figure=True, use_container_width=True)
+
+            r2c1, r2c2 = st.columns(2, gap="small")
+            with r2c1:
+                fig_impact = draw_impact_pass_map(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_impact, clear_figure=True, use_container_width=True)
+            with r2c2:
+                fig_dest_impact = draw_pass_destination_heatmap(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_dest_impact, clear_figure=True, use_container_width=True)
+
+    with col_side:
+        render_dashboard_sidebar(player, show_radar=False)
+
+
+def _resolve_dashboard_player(
+    player_id: str | None,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    *,
+    rate_fn=rate_player_vs_eligible_pool,
+) -> dict | None:
+    if not player_id or player_id not in players_by_id:
+        return None
+    player = dict(players_by_id[player_id])
+    if not player.get("eligible_for_rating"):
+        group = str(player.get("position_group") or "—")
+        player = rate_fn(player, pool_by_position.get(group, []))
+    return player
+
+
+def render_dashboard_player_picker(
+    all_players: list[dict],
+    players_by_id: dict[str, dict],
+) -> str | None:
+    st.caption("Select a player in the Maps or Player Analysis tabs.")
+
+    options = _player_options(all_players)
+    if not options:
+        st.info("No players available.")
+        return None
+
+    labels = [o[3] for o in options]
+    id_by_label = {o[3]: o[0] for o in options}
+    label_by_id = {o[0]: o[3] for o in options}
+
+    _sync_player_selection(players_by_id, label_by_id)
+
+    selected_label = st.selectbox(
+        "Player",
+        options=labels,
+        key=SELECTBOX_KEY,
+        placeholder="Select a player",
+    )
+
+    if not selected_label:
+        st.info("Select a player in the Maps or Player Analysis tabs.")
+        return None
+
+    player_id = id_by_label[selected_label]
+    st.session_state["map_player_id"] = player_id
+    return player_id
+
+
+def render_passes_dashboard_content(
+    player_id: str | None,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    passes_by_player: dict,
+) -> None:
+    player = _resolve_dashboard_player(player_id, players_by_id, pool_by_position)
+    if player is None:
+        return
+    render_player_layout(player, passes_by_player.get(player_id))
+
+
+def render_map_section(
+    all_players: list[dict],
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    passes_by_player: dict,
+    *,
+    player_id: str | None = None,
+) -> None:
+    if player_id is None:
+        render_dashboard_player_picker(all_players, players_by_id)
+        player_id = st.session_state.get("map_player_id")
+    render_passes_dashboard_content(
+        player_id, players_by_id, pool_by_position, passes_by_player,
+    )
+
+
+def _render_carries_player_layout(player: dict, carries, dribbles) -> None:
+    team_label = player.get("team", "—")
+    player_name = player["player_name"]
+    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
+
+    with col_maps:
+        r1c1, r1c2 = st.columns(2, gap="small")
+        with r1c1:
+            if carries is None or carries.empty:
+                st.warning("No carries for this player.")
+            else:
+                fig_all = draw_all_carries_map(
+                    carries, player_name, team_label, compact=False,
+                )
+                st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+        with r1c2:
+            if carries is None or carries.empty:
+                st.warning("No impact carries for this player.")
+            else:
+                fig_impact = draw_carry_impact_map(
+                    carries, player_name, team_label, compact=False,
+                )
+                st.pyplot(fig_impact, clear_figure=True, use_container_width=True)
+
+        r2c1, r2c2 = st.columns(2, gap="small")
+        with r2c1:
+            if dribbles is None or dribbles.empty:
+                st.info("No dribbles with coordinates for this player.")
+            else:
+                fig_drib = draw_dribble_map(
+                    dribbles, player_name, team_label, compact=False,
+                )
+                st.pyplot(fig_drib, clear_figure=True, use_container_width=True)
+        with r2c2:
+            if carries is None or carries.empty:
+                st.warning("No impact carries for heatmap.")
+            else:
+                fig_heat = draw_carry_threat_heatmap(
+                    carries, player_name, team_label, compact=False,
+                )
+                st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+
+    with col_side:
+        render_dashboard_sidebar(
+            player,
+            scout_section_specs=CARRIES_SCOUT_SECTION_SPECS,
+            pillar_labels=_CARRY_RADAR_METRIC_LABELS,
+            participation_keys=CARRIES_PARTICIPATION_KEYS,
+            label_fn=ce_analyst_metric_label,
+            tooltip_fn=ce_metric_tooltip,
+            rank_in_group_fn=ce_rank_in_group_label,
+            fmt_pct_fn=ce_fmt_pct,
+            fmt_stat_fn=ce_fmt_stat_value,
+            confidence_minutes=CARRIES_RATING_CONFIDENCE_MINUTES,
+            confidence_passes=CARRIES_RATING_CONFIDENCE_PASSES,
+            show_radar=False,
+        )
+
+
+def render_carries_player_layout(player: dict, carries, dribbles) -> None:
+    _render_carries_player_layout(player, carries, dribbles)
+
+
+def render_carries_dashboard_content(
+    player_id: str | None,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    carries_by_player: dict,
+    dribbles_by_player: dict,
+) -> None:
+    player = _resolve_dashboard_player(
+        player_id,
+        players_by_id,
+        pool_by_position,
+        rate_fn=ce_rate_player_vs_eligible_pool,
+    )
+    if player is None:
+        return
+    render_carries_player_layout(
+        player,
+        carries_by_player.get(player_id),
+        dribbles_by_player.get(player_id),
+    )
+
+
+def render_carries_map_section(
+    all_players: list[dict],
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    carries_by_player: dict,
+    dribbles_by_player: dict,
+    *,
+    player_id: str | None = None,
+) -> None:
+    if player_id is None:
+        player_id = st.session_state.get("map_player_id")
+    render_carries_dashboard_content(
+        player_id,
+        players_by_id,
+        pool_by_position,
+        carries_by_player,
+        dribbles_by_player,
+    )
+
+
+def render_progression_player_layout(player: dict, passes, carries) -> None:
+    team_label = player.get("team", "—")
+    player_name = player["player_name"]
+    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
+
+    with col_maps:
+        r1c1, r1c2 = st.columns(2, gap="small")
+        with r1c1:
+            fig_all = draw_all_actions_map(
+                passes, carries, player_name, team_label, compact=False,
+            )
+            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+        with r1c2:
+            fig_heat_all = draw_all_actions_heatmap(
+                passes, carries, player_name, team_label, compact=False,
+            )
+            st.pyplot(fig_heat_all, clear_figure=True, use_container_width=True)
+
+        r2c1, r2c2 = st.columns(2, gap="small")
+        with r2c1:
+            fig_threat = draw_threat_actions_map(
+                passes, carries, player_name, team_label, compact=False,
+            )
+            st.pyplot(fig_threat, clear_figure=True, use_container_width=True)
+        with r2c2:
+            fig_heat_threat = draw_threat_actions_heatmap(
+                passes, carries, player_name, team_label, compact=False,
+            )
+            st.pyplot(fig_heat_threat, clear_figure=True, use_container_width=True)
+
+    with col_side:
+        render_dashboard_sidebar(
+            player,
+            scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+            pillar_labels=_PROGRESSION_RADAR_METRIC_LABELS,
+            participation_keys=PROGRESSION_PARTICIPATION_KEYS,
+            label_fn=pg_analyst_metric_label,
+            tooltip_fn=pg_metric_tooltip,
+            rank_in_group_fn=pg_rank_in_group_label,
+            fmt_pct_fn=pg_fmt_pct,
+            fmt_stat_fn=pg_fmt_stat_value,
+            confidence_minutes=RATING_CONFIDENCE_MINUTES,
+            confidence_passes=RATING_CONFIDENCE_PASSES,
+            rating_key="progression_rating",
+            rating_slot_fn=_progression_rating_slot_html,
+        )
+
+
+def render_progression_dashboard_content(
+    player_id: str | None,
+    progression_by_id: dict[str, dict],
+    pass_by_id: dict[str, dict],
+    carry_by_id: dict[str, dict],
+    progression_pool_by_position: dict[str, list[dict]],
+    pass_pool_by_position: dict[str, list[dict]],
+    carry_pool_by_position: dict[str, list[dict]],
+    passes_by_player: dict,
+    carries_by_player: dict,
+) -> None:
+    if not player_id:
+        return
+
+    player = progression_by_id.get(player_id)
+    if player is None or not player.get("eligible_for_rating"):
+        pass_player = _resolve_dashboard_player(player_id, pass_by_id, pass_pool_by_position)
+        carry_player = _resolve_dashboard_player(
+            player_id,
+            carry_by_id,
+            carry_pool_by_position,
+            rate_fn=ce_rate_player_vs_eligible_pool,
+        )
+        if pass_player is None and carry_player is None:
+            return
+        base = dict(player or pass_player or carry_player or {})
+        player = pg_build_progression_dashboard_player(
+            base,
+            pass_player,
+            carry_player,
+            progression_player=progression_by_id.get(player_id),
+        )
+    render_progression_player_layout(
+        player,
+        passes_by_player.get(player_id),
+        carries_by_player.get(player_id),
+    )
+
+
+def render_progression_map_section(
+    progression_by_id: dict[str, dict],
+    pass_by_id: dict[str, dict],
+    carry_by_id: dict[str, dict],
+    progression_pool_by_position: dict[str, list[dict]],
+    pass_pool_by_position: dict[str, list[dict]],
+    carry_pool_by_position: dict[str, list[dict]],
+    passes_by_player: dict,
+    carries_by_player: dict,
+    *,
+    player_id: str | None = None,
+) -> None:
+    if player_id is None:
+        player_id = st.session_state.get("map_player_id")
+    render_progression_dashboard_content(
+        player_id,
+        progression_by_id,
+        pass_by_id,
+        carry_by_id,
+        progression_pool_by_position,
+        pass_pool_by_position,
+        carry_pool_by_position,
+        passes_by_player,
+        carries_by_player,
+    )
+
+
+def _resolve_progression_analysis_player(
+    player_id: str | None,
+    progression_by_id: dict[str, dict],
+    pass_by_id: dict[str, dict],
+    carry_by_id: dict[str, dict],
+    progression_pool_by_position: dict[str, list[dict]],
+    pass_pool_by_position: dict[str, list[dict]],
+    carry_pool_by_position: dict[str, list[dict]],
+) -> dict | None:
+    if not player_id:
+        return None
+
+    player_id = str(player_id)
+    pass_player = pass_by_id.get(player_id)
+    carry_player = carry_by_id.get(player_id)
+    position_pool = progression_pool_by_position.get(
+        str((progression_by_id.get(player_id) or pass_player or carry_player or {}).get("position_group") or "—"),
+        [],
+    )
+
+    player = progression_by_id.get(player_id)
+    if player is None or not player.get("eligible_for_rating"):
+        pass_player = _resolve_dashboard_player(player_id, pass_by_id, pass_pool_by_position)
+        carry_player = _resolve_dashboard_player(
+            player_id,
+            carry_by_id,
+            carry_pool_by_position,
+            rate_fn=ce_rate_player_vs_eligible_pool,
+        )
+        if pass_player is None and carry_player is None:
+            return None
+        base = dict(player or pass_player or carry_player or {})
+        built = pg_build_progression_dashboard_player(
+            base,
+            pass_player,
+            carry_player,
+            progression_player=progression_by_id.get(player_id),
+        )
+        return pg_attach_participation_ranks_to_player(
+            built,
+            position_pool,
+            pass_by_id=pass_by_id,
+            carry_by_id=carry_by_id,
+            pass_player=pass_player,
+            carry_player=carry_player,
+        )
+
+    resolved = pg_enrich_traditional_participation_fields(
+        dict(player),
+        pass_player=pass_player,
+        carry_player=carry_player,
+    )
+    metric_ranks = resolved.get("metric_ranks") if isinstance(resolved.get("metric_ranks"), dict) else {}
+    if not any(key in metric_ranks for key in TRADITIONAL_PARTICIPATION_KEYS):
+        resolved = pg_attach_participation_ranks_to_player(
+            resolved,
+            position_pool,
+            pass_by_id=pass_by_id,
+            carry_by_id=carry_by_id,
+            pass_player=pass_player,
+            carry_player=carry_player,
+        )
+    return resolved
+
+
+def _filter_maps_passes_by_distance(passes, *, short_only: bool):
+    """Keep only passes under the dashboard short-distance band (<15 m)."""
+    if not short_only or passes is None or passes.empty:
+        return passes
+    if "pass_distance" not in passes.columns:
+        return passes
+    mask = passes["pass_distance"].to_numpy(dtype=float) < pe.DISTANCE_SHORT_MAX_M
+    return passes.loc[mask].copy()
+
+
+def _resolve_maps_passes(
+    player_id: str,
+    passes_by_player: dict,
+    xp_passes_by_player: dict,
+    *,
+    short_only: bool,
+    xp_threat_only: bool,
+):
+    if xp_threat_only:
+        passes_df = xp_passes_by_player.get(str(player_id))
+        if passes_df is not None and not passes_df.empty and xe.THREAT_COL in passes_df.columns:
+            passes_df = passes_df[passes_df[xe.THREAT_COL]].copy()
+        else:
+            passes_df = None
+    else:
+        passes_df = passes_by_player.get(player_id)
+    return _filter_maps_passes_by_distance(passes_df, short_only=short_only)
+
+
+def render_xp_season_rankings(xp_players: list[dict]) -> None:
+    """Season-wide xP M4 rankings and impact-pass leaders."""
+    if not xp_players:
+        st.info("Season xP metrics unavailable.")
+        return
+
+    meta = xe.season_meta()
+    st.markdown("### xP M4 — Copa do Mundo")
+    st.caption(
+        f"Model 4 (origin 12×8 → destination 12×8) · Team seasonal surface · "
+        f"{IMPACT_PASS_ABBR} = composite score (45% xP + 35% residual + 20% progress) ≥ P{int(xe.IMPACT_SCORE_PERCENTILE * 1000) / 10} per band "
+        f"and progress ≥ P{int(xe.IMPACT_PROGRESS_PERCENTILE * 100)} per band · "
+        f"{meta.get('passes', '—'):,} passes · "
+        f"{meta.get('threats', '—'):,} xP {IMPACT_PASS_ABBR}"
+        if meta
+        else f"Model 4 with {IMPACT_PASS_ABBR} quantile thresholds."
+    )
+
+    position_groups = sorted({str(p.get("position_group") or "—") for p in xp_players})
+    pos_options = ["All"] + position_groups
+    pos_filter = st.selectbox(
+        "Position (group)",
+        options=pos_options,
+        format_func=lambda group: (
+            "All"
+            if group == "All"
+            else position_group_label(group)
+        ),
+        key="xp_rank_pos_filter",
+    )
+    rows = xp_players
+    if pos_filter != "All":
+        rows = [p for p in xp_players if str(p.get("position_group")) == pos_filter]
+
+    rank_col, threat_col = st.columns(2, gap="medium")
+    with rank_col:
+        st.markdown("**Top xP total**")
+        show = pd.DataFrame([
+            {
+                "Player": p["player_name"],
+                "Team": p.get("team", "—"),
+                "Pos": p.get("position", "—"),
+                "Passes": p.get("passes_completed", 0),
+                "xP total": round(float(p.get("xp_m4_total", 0)), 2),
+                "xP/pass": round(float(p.get("xp_m4_per_pass", 0)), 3),
+            }
+            for p in rows[:15]
+        ])
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+    with threat_col:
+        st.markdown(f"**Top xP {IMPACT_PASS_ABBR}**")
+        by_threat = sorted(rows, key=lambda p: int(p.get("xp_m4_threat_passes", 0)), reverse=True)
+        show_t = pd.DataFrame([
+            {
+                "Player": p["player_name"],
+                "Team": p.get("team", "—"),
+                "xP Impact": int(p.get("xp_m4_threat_passes", 0)),
+                "≤30m": int(p.get("xp_m4_threat_short", 0)),
+                ">30m": int(p.get("xp_m4_threat_long", 0)),
+                "Rate %": round(100 * float(p.get("xp_m4_threat_rate", 0)), 1),
+            }
+            for p in by_threat[:15]
+        ])
+        st.dataframe(show_t, use_container_width=True, hide_index=True)
+
+
+def render_maps_tab_layout(player: dict, passes, carries) -> None:
+    """Maps tab: 3 mini maps on row 1, 2 on row 2."""
+    team_label = player.get("team", "—")
+    player_name = str(player.get("player_name", ""))
+    has_passes = passes is not None and not passes.empty
+    has_carries = carries is not None and not carries.empty
+    has_actions = has_passes or has_carries
+
+    st.markdown('<div class="pa-maps-grid-row">', unsafe_allow_html=True)
+    r1c1, r1c2, r1c3 = st.columns(3, gap="small")
+    with r1c1:
+        if has_actions:
+            fig_origin = draw_action_origin_smooth_heatmap(
+                passes, carries, player_name, profile=False, mini=True,
+            )
+            st.pyplot(fig_origin, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("No action origins.")
+    with r1c2:
+        if has_actions:
+            fig_all = draw_all_actions_map(
+                passes, carries, player_name, team_label, compact=True,
+            )
+            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("No actions.")
+    with r1c3:
+        if has_actions:
+            fig_heat_all = draw_all_actions_heatmap(
+                passes, carries, player_name, team_label, compact=True,
+            )
+            st.pyplot(fig_heat_all, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("No heatmap.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if has_actions:
+        st.markdown('<div class="pa-maps-grid-row">', unsafe_allow_html=True)
+        _, r2c1, r2c2, _ = st.columns([0.35, 1, 1, 0.35], gap="small")
+        with r2c1:
+            fig_threat = draw_threat_actions_map(
+                passes, carries, player_name, team_label, compact=True,
+            )
+            st.pyplot(fig_threat, clear_figure=True, use_container_width=True)
+        with r2c2:
+            fig_heat_threat = draw_threat_actions_heatmap(
+                passes, carries, player_name, team_label, compact=True,
+            )
+            st.pyplot(fig_heat_threat, clear_figure=True, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_progression_maps_only(player: dict, passes, carries, *, compact: bool = False) -> None:
+    team_label = player.get("team", "—")
+    player_name = player["player_name"]
+    r1c1, r1c2 = st.columns(2, gap="small")
+    with r1c1:
+        fig_all = draw_all_actions_map(
+            passes, carries, player_name, team_label, compact=compact,
+        )
+        st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+    with r1c2:
+        fig_heat_all = draw_all_actions_heatmap(
+            passes, carries, player_name, team_label, compact=compact,
+        )
+        st.pyplot(fig_heat_all, clear_figure=True, use_container_width=True)
+
+    r2c1, r2c2 = st.columns(2, gap="small")
+    with r2c1:
+        fig_threat = draw_threat_actions_map(
+            passes, carries, player_name, team_label, compact=compact,
+        )
+        st.pyplot(fig_threat, clear_figure=True, use_container_width=True)
+    with r2c2:
+        fig_heat_threat = draw_threat_actions_heatmap(
+            passes, carries, player_name, team_label, compact=compact,
+        )
+        st.pyplot(fig_heat_threat, clear_figure=True, use_container_width=True)
+
+
+def _sync_player_analysis_selection(
+    players_by_id: dict[str, dict],
+    label_by_id: dict[str, str],
+    *,
+    key_prefix: str = "pa",
+) -> None:
+    """Sync slicer from URL deep-links only until the user picks position/player manually."""
+    if key_prefix not in {"pa", "maps"}:
+        return
+    qp = st.query_params.get("player_id")
+    qp_id = str(qp) if qp else None
+    if not qp_id or qp_id not in players_by_id:
+        st.session_state.pop(PA_URL_PLAYER_KEY, None)
+        return
+
+    if qp_id != st.session_state.get(PA_URL_PLAYER_KEY):
+        st.session_state.pop(PA_USER_PLAYER_PICK_KEY, None)
+        st.session_state.pop(PA_USER_POSITION_PICK_KEY, None)
+
+    if st.session_state.get(PA_USER_PLAYER_PICK_KEY) or st.session_state.get(PA_USER_POSITION_PICK_KEY):
+        return
+
+    player = players_by_id[qp_id]
+    url_synced_now = False
+    if qp_id != st.session_state.get(PA_URL_PLAYER_KEY):
+        if key_prefix == "pa" and not st.session_state.get(PA_USER_POSITION_PICK_KEY):
+            block_id = _position_block_for_player(player)
+            _sync_position_block_state(
+                block_id,
+                state_key=PLAYER_ANALYSIS_POSITION_BLOCKS_KEY,
+                key_prefix="pa",
+            )
+        st.session_state[PA_URL_PLAYER_KEY] = qp_id
+        st.session_state["map_player_id"] = qp_id
+        url_synced_now = True
+
+    if qp_id in label_by_id:
+        label = label_by_id[qp_id]
+        select_key = _player_select_widget_key(key_prefix)
+        if url_synced_now or select_key not in st.session_state:
+            st.session_state[select_key] = label
+
+
+def _prepare_sb_to_sa_similarity_context(
+    all_players: list[dict],
+    carries_players_sb: list[dict],
+) -> tuple[
+    dict,
+    dict,
+    dict[str, dict],
+    dict[str, list[dict]],
+    dict[str, list[dict]],
+    dict[str, dict],
+    dict[str, dict],
+    dict[str, dict],
+    dict[str, dict],
+] | None:
+    serie_a_players = load_serie_a_players()
+    if not serie_a_players:
+        return None
+
+    serie_a_passes = load_serie_a_passes()
+    serie_a_carries = load_serie_a_carries()
+    serie_a_carry_players = load_serie_a_carry_players()
+    sb_pass_by_id = {str(p["player_id"]): p for p in all_players}
+    sb_carry_by_id = {str(p["player_id"]): p for p in carries_players_sb}
+    sa_pass_by_id = {str(p["player_id"]): p for p in serie_a_players}
+    sa_carry_by_id = {str(p["player_id"]): p for p in serie_a_carry_players}
+    sb_merged = sim.enrich_players_with_carry_metrics(
+        enrich_player_eligibility(all_players),
+        sb_carry_by_id,
+    )
+    sa_merged = sim.enrich_players_with_carry_metrics(
+        enrich_player_eligibility(serie_a_players),
+        sa_carry_by_id,
+    )
+    sb_by_pos = sim.group_players_by_detailed_position(sb_merged)
+    sa_by_pos = sim.group_players_by_detailed_position(sa_merged)
+    players_sb_by_id = {str(p["player_id"]): p for p in sb_merged}
+    return (
+        serie_a_passes,
+        serie_a_carries,
+        players_sb_by_id,
+        sa_by_pos,
+        sb_by_pos,
+        sb_pass_by_id,
+        sb_carry_by_id,
+        sa_pass_by_id,
+        sa_carry_by_id,
+    )
+
+
+def _render_player_analysis_similarity(
+    target_id: str,
+    *,
+    passes_by_player: dict,
+    carries_by_player: dict,
+    carries_players_sb: list[dict],
+    all_players: list[dict],
+    pick_key: str = "pa_similar_pick",
+) -> None:
+    with st.spinner("Loading Serie A reference pool…"):
+        context = _prepare_sb_to_sa_similarity_context(all_players, carries_players_sb)
+    if context is None:
+        st.warning(
+            "Serie A data unavailable — confirm season_all_brfull.csv and redeploy the app."
+        )
+        return
+
+    serie_a_passes, serie_a_carries, players_sb_by_id, sa_by_pos, sb_by_pos, sb_pass_by_id, sb_carry_by_id, sa_pass_by_id, sa_carry_by_id = context
+    if target_id not in players_sb_by_id:
+        st.warning("Selected player is not available for similarity.")
+        return
+
+    target_player = dict(players_sb_by_id[target_id])
+    search_pos = sim.player_search_position(target_player)
+    if not search_pos:
+        st.warning("Invalid position for comparison (goalkeepers are excluded).")
+        return
+
+    pool = sim.similarity_search_pool(sa_by_pos, search_pos)
+    pool_label = f"Serie A · {sim.similarity_position_label(search_pos)}"
+    if not pool:
+        st.warning(
+            f"No eligible Serie A players at **{html.escape(sim.similarity_position_label(search_pos))}**."
+        )
+        return
+
+    st.markdown(
+        f'<p class="pa-similar-caption">Top {SIMILARITY_TOP_K} Serie A players in '
+        f"<strong>{html.escape(pool_label)}</strong> ({len(pool)} eligible, "
+        f"≥{int(sim.SIMILARITY_MIN_MINUTES_PCT * 100)}% minutes). "
+        "Ranked by xStats (xT metrics); Stats p90 compares traditional volume; "
+        "Origin reflects shared start locations. Click a row to compare.</p>",
+        unsafe_allow_html=True,
+    )
+    results = sim.find_similar_option_c(target_player, pool, top_k=SIMILARITY_TOP_K)
+    results = sim.attach_traditional_p90_similarity(
+        results,
+        target_player,
+        pool,
+        target_pass_by_id=sb_pass_by_id,
+        target_carry_by_id=sb_carry_by_id,
+        pool_pass_by_id=sa_pass_by_id,
+        pool_carry_by_id=sa_carry_by_id,
+    )
+    results = sim.attach_pass_origin_similarity(
+        results,
+        passes_by_player.get(target_id),
+        serie_a_passes,
+        target_carries=carries_by_player.get(target_id),
+        carries_by_id=serie_a_carries,
+    )
+    _render_similarity_results_tab(
+        results=results,
+        target=target_player,
+        target_passes=passes_by_player.get(target_id),
+        pool_passes=serie_a_passes,
+        target_carries=carries_by_player.get(target_id),
+        pool_carries=serie_a_carries,
+        target_league="Copa do Mundo",
+        similar_league="Serie A",
+        target_pool_by_pos=sb_by_pos,
+        similar_pool_by_pos=sa_by_pos,
+        pick_key=pick_key,
+        include_origin=False,
+        origin_column=True,
+        traditional_column=True,
+        html_table=True,
+    )
+    with st.expander("Metrics used in similarity"):
+        st.markdown("**xStats (xT)**")
+        st.write(", ".join(sim.similarity_metric_label(k) for k in sim.SIMILARITY_METRICS_A))
+        st.markdown("**Stats p90 (traditional)**")
+        st.write(", ".join(pge.METRIC_LABELS.get(k, k) for k in sim.SIMILARITY_TRADITIONAL_METRICS))
+
+
+def _filter_special_passes_for_map(passes_df, special_pass_key: str):
+    return xstats.filter_passes_by_special_type(passes_df, special_pass_key)
+
+
+def _filter_threat_passes_for_map(passes_df, threat_band_key: str):
+    return xstats.filter_passes_by_threat_type(passes_df, threat_band_key)
+
+
+def _maps_passes_table(pass_df, *, sort_by_residual: bool = False) -> "pd.DataFrame":
+    import pandas as pd
+
+    work = pass_df.copy()
+    if "xp_residual" not in work.columns and {"xp_m4", "xp_expected"}.issubset(work.columns):
+        work["xp_residual"] = work["xp_m4"].astype(float) - work["xp_expected"].astype(float)
+    if sort_by_residual and "xp_residual" in work.columns:
+        work = work.sort_values("xp_residual", ascending=False)
+    elif "xp_m4" in work.columns:
+        work = work.sort_values("xp_m4", ascending=False)
+    return work.reset_index(drop=True)
+
+
+def _pass_map_round_options(raw_passes) -> tuple[list[str], dict[str, str]]:
+    return xstats.map_round_options(raw_passes)
+
+
+def _filter_pass_map_round(passes, round_key: str):
+    return xstats.filter_passes_by_map_round(passes, round_key)
+
+
+def _pass_map_scope_label(round_key: str, round_labels: dict[str, str]) -> str:
+    if str(round_key or "all") == "all":
+        return APP_LEAGUE
+    return round_labels.get(str(round_key), APP_LEAGUE)
+
+
+def _render_pass_map_figures(
+    *,
+    work,
+    player_name: str,
+    map_filter_key: str,
+    map_category_label: str,
+    season_label: str,
+    captions_language: str,
+) -> tuple[object, object, str]:
+    if xstats.is_maps_top_residual_pass(map_filter_key):
+        fig_passes = draw_top_residual_passes_map(
+            work,
+            player_name=player_name,
+            season_label=season_label,
+            show_labels=True,
+        )
+        if captions_language == "pt":
+            pass_caption = (
+                f"Top {len(work)} passes por resíduo · cor = Δ (xP real − esperado)"
+            )
+        else:
+            pass_caption = (
+                f"Top {len(work)} passes by residual · color = Δ (xP real − esperado)"
+            )
+    else:
+        fig_passes = draw_special_passes_season_map(
+            work,
+            player_name=player_name,
+            season_label=season_label,
+            category_label=map_category_label,
+            xp_col="xp_m4",
+            highlight_index=None,
+            show_labels=False,
+            cmap=_CMAP_XP_GRAY_RED,
+        )
+        if captions_language == "pt":
+            pass_kind = (
+                f"xP {IMPACT_PASS_ABBR}"
+                if xstats.is_maps_xp_threat_pass(map_filter_key)
+                else "passes completos"
+            )
+            pass_caption = f"{len(work)} {pass_kind} · cor = xP (cinza → vermelho forte)"
+        else:
+            pass_kind = (
+                f"xP {IMPACT_PASS_ABBR}"
+                if xstats.is_maps_xp_threat_pass(map_filter_key)
+                else "completed passes"
+            )
+            pass_caption = f"{len(work)} {pass_kind} · pass color = xP (gray → strong red)"
+    fig_dest = draw_passes_destination_heatmap(
+        work,
+        player_name=player_name,
+        season_label=season_label,
+        category_label=map_category_label,
+        cmap=_CMAP_XP_GRAY_RED,
+    )
+    return fig_passes, fig_dest, pass_caption
+
+
+def _maps_pass_option_label(row, index: int) -> str:
+    xp = float(row.get("xp_m4") or 0.0)
+    residual = float(row.get("xp_residual") or 0.0)
+    dist = float(row.get("pass_distance") or 0.0)
+    match = str(row.get("match_date") or "—")
+    return f"#{index + 1} · xP {xp:.3f} · Δ {residual:+.3f} · {dist:.0f} m · {match}"
+
+
+def _maps_pass_select_key(player_id: str, map_filter_key: str) -> str:
+    return f"{MAPS_PASS_SELECT_KEY}_{player_id}_{map_filter_key}"
+
+
+def _xp_stats_metric_ranks_dict(profile: dict, keys: tuple[str, ...]) -> dict:
+    ranks: dict[str, dict[str, int]] = {}
+    for key in keys:
+        rank = profile.get(f"{key}_rank_in_group")
+        total = profile.get(f"{key}_rank_pool_in_group")
+        if rank and total:
+            ranks[key] = {"rank": int(rank), "total": int(total)}
+    return ranks
+
+
+def _stats_metric_line_html(profile: dict, key: str, metric_ranks: dict) -> str:
+    return _metric_line_html(
+        xstats.stats_metric_label(key),
+        key,
+        xstats.format_stats_value(key, profile.get(key)),
+        metric_ranks,
+        show_rank=True,
+        label_fn=xstats.stats_metric_label,
+        tooltip_fn=lambda _k: "",
+        rank_in_group_fn=_xp_rank_in_group_label,
+    )
+
+
+def _stats_section_summary_html(section_title: str) -> str:
+    title_row = (
+        f'<div class="grade-card-title-row">'
+        f'<div class="grade-card-title">{html.escape(section_title)}</div>'
+        f"</div>"
+    )
+    return (
+        f'<div class="grade-summary-main">'
+        f'<div class="grade-summary-top">'
+        f"{title_row}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _stats_section_accordion_html(
+    profile: dict,
+    section_title: str,
+    keys: tuple[str, ...],
+) -> str:
+    metric_ranks = _xp_stats_metric_ranks_dict(profile, keys)
+    lines = "".join(_stats_metric_line_html(profile, key, metric_ranks) for key in keys)
+    return (
+        '<details class="grade-accordion" name="stats-sections">'
+        "<summary>"
+        '<i class="fa-solid fa-chevron-right grade-arrow" aria-hidden="true"></i>'
+        f"{_stats_section_summary_html(section_title)}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
+    )
+
+
+def _iter_stats_sections() -> list[tuple[str, tuple[str, ...]]]:
+    if hasattr(xstats, "iter_xp_stats_sections"):
+        return list(xstats.iter_xp_stats_sections())
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for entry in xstats.XP_STATS_SECTIONS:
+        if len(entry) == 2:
+            title, keys = entry
+            out.append((title, keys))
+        else:
+            title, keys, _summary = entry
+            out.append((title, keys))
+    return out
+
+
+def _build_stats_panel_html(profile: dict) -> str:
+    parts: list[str] = ['<div class="stats-panel">']
+    for section_title, keys in _iter_stats_sections():
+        parts.append(_stats_section_accordion_html(profile, section_title, keys))
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _scatter_pool_players(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None,
+    position_codes: frozenset[str],
+    position_groups: frozenset[str],
+) -> tuple[list[dict], dict[str, float]]:
+    passes_col = "passes_completed"
+    xp_profiles = list((xp_by_id or {}).values())
+    thresholds = xstats.p20_pass_thresholds_by_group(xp_profiles, passes_col)
+
+    rows: list[dict] = []
+    for player in all_players:
+        pid = str(player["player_id"])
+        profile = progression_by_id.get(pid, player)
+        if not _player_matches_position_filter(
+            profile,
+            position_codes=position_codes,
+            position_groups=position_groups,
+        ):
+            continue
+        xp_profile = (xp_by_id or {}).get(pid)
+        if not xp_profile:
+            continue
+        group = str(xp_profile.get("position_group") or profile.get("position_group") or "CM")
+        min_passes = float(thresholds.get(group, 0.0))
+        if float(xp_profile.get(passes_col) or 0.0) < min_passes:
+            continue
+        rows.append({**profile, **xp_profile, "player_id": pid})
+    return rows, thresholds
+
+
+def _scatter_mean_pass_distance(row: dict) -> float:
+    mean_dist = row.get("pass_mean_distance")
+    try:
+        val = float(mean_dist)
+    except (TypeError, ValueError):
+        val = 0.0
+    if val > 0:
+        return val
+    try:
+        short = float(row.get("passes_short") or 0.0)
+        long_ = float(row.get("passes_long") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    total = short + long_
+    if total <= 0:
+        return 0.0
+    return (short * 15.0 + long_ * 35.0) / total
+
+
+def _scatter_marker_sizes(
+    mean_distances: list[float],
+    *,
+    highlight: bool = False,
+) -> list[float]:
+    if not mean_distances:
+        return []
+    dmin = min(mean_distances)
+    dmax = max(mean_distances)
+    lo = 7.0 if not highlight else 11.0
+    hi = 20.0 if not highlight else 26.0
+    span = dmax - dmin
+    if span <= 1e-9:
+        return [(lo + hi) / 2.0 for _ in mean_distances]
+    return [lo + (dist - dmin) / span * (hi - lo) for dist in mean_distances]
+
+
+def build_stats_scatter_figure(
+    players: list[dict],
+    *,
+    x_key: str,
+    y_key: str,
+    x_label: str,
+    y_label: str,
+    position_label: str,
+    highlight_player_id: str | None = None,
+):
+    import math
+
+    import plotly.graph_objects as go
+
+    points: list[dict[str, object]] = []
+    for row in players:
+        try:
+            x_val = float(row.get(x_key))
+            y_val = float(row.get(y_key))
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(x_val) and math.isfinite(y_val)):
+            continue
+        points.append({
+            "x": x_val,
+            "y": y_val,
+            "name": str(row.get("player_name", "—")),
+            "team": str(row.get("team", "—")),
+            "position": str(row.get("position", "—")),
+            "player_id": str(row.get("player_id", "")),
+            "x_fmt": xstats.format_stats_value(x_key, x_val),
+            "y_fmt": xstats.format_stats_value(y_key, y_val),
+            "mean_dist": _scatter_mean_pass_distance(row),
+        })
+
+    fig = go.Figure()
+    mean_gold = "rgba(251, 191, 36, 0.16)"
+
+    regular = [p for p in points if p["player_id"] != str(highlight_player_id or "")]
+    highlighted = [p for p in points if p["player_id"] == str(highlight_player_id or "")]
+
+    hover_template = (
+        "<b>%{text}</b><br>"
+        f"{x_label}: %{{customdata[2]}}<br>"
+        f"{y_label}: %{{customdata[3]}}<br>"
+        "Mean dist.: %{customdata[4]:.1f} m<br>"
+        "%{customdata[0]} · %{customdata[1]}"
+        "<extra></extra>"
+    )
+
+    if regular:
+        regular_sizes = _scatter_marker_sizes([float(p["mean_dist"]) for p in regular])
+        fig.add_trace(
+            go.Scatter(
+                x=[p["x"] for p in regular],
+                y=[p["y"] for p in regular],
+                mode="markers",
+                name="Players",
+                marker=dict(
+                    size=regular_sizes,
+                    color="rgba(168, 85, 247, 0.86)",
+                    line=dict(width=0.8, color="#581c87"),
+                ),
+                text=[p["name"] for p in regular],
+                customdata=[
+                    [p["team"], p["position"], p["x_fmt"], p["y_fmt"], p["mean_dist"]] for p in regular
+                ],
+                hovertemplate=hover_template,
+            )
+        )
+
+    if highlighted:
+        highlight_sizes = _scatter_marker_sizes([float(p["mean_dist"]) for p in highlighted], highlight=True)
+        fig.add_trace(
+            go.Scatter(
+                x=[p["x"] for p in highlighted],
+                y=[p["y"] for p in highlighted],
+                mode="markers",
+                name="Selecionado",
+                marker=dict(
+                    size=highlight_sizes,
+                    color="#fbbf24",
+                    line=dict(width=1.4, color="#f8fafc"),
+                ),
+                text=[p["name"] for p in highlighted],
+                customdata=[
+                    [p["team"], p["position"], p["x_fmt"], p["y_fmt"], p["mean_dist"]] for p in highlighted
+                ],
+                hovertemplate=hover_template,
+            )
+        )
+
+    if points:
+        mean_x = sum(float(p["x"]) for p in points) / len(points)
+        mean_y = sum(float(p["y"]) for p in points) / len(points)
+        fig.add_vline(x=mean_x, line_color=mean_gold, line_width=1.1)
+        fig.add_hline(y=mean_y, line_color=mean_gold, line_width=1.1)
+
+    fig.update_layout(
+        title=dict(
+            text=f"{x_label} vs {y_label} · {position_label}",
+            font=dict(size=12, color="#f8fafc"),
+            x=0.02,
+            xanchor="left",
+        ),
+        height=560,
+        margin=dict(l=12, r=12, t=42, b=12),
+        paper_bgcolor="#0f172a",
+        plot_bgcolor="#0f172a",
+        font=dict(color="#cbd5e1", size=10),
+        hoverlabel=dict(
+            bgcolor="#111827",
+            bordercolor="#334155",
+            font=dict(color="#f8fafc", size=12),
+        ),
+        showlegend=False,
+        hovermode="closest",
+        xaxis=dict(
+            title=dict(text=x_label, font=dict(size=10, color="#94a3b8")),
+            color="#94a3b8",
+            showgrid=False,
+            zeroline=False,
+            linecolor="#334155",
+            tickfont=dict(size=10, color="#94a3b8"),
+        ),
+        yaxis=dict(
+            title=dict(text=y_label, font=dict(size=10, color="#94a3b8")),
+            color="#94a3b8",
+            showgrid=False,
+            zeroline=False,
+            linecolor="#334155",
+            tickfont=dict(size=10, color="#94a3b8"),
+        ),
+    )
+    return fig
+
+
+def _selected_position_blocks_label(
+    state_key: str,
+    blocks: tuple[tuple[str, str, frozenset[str] | None, str | None], ...] = PLAYER_ANALYSIS_POSITION_BLOCKS,
+) -> str:
+    selected = st.session_state.get(state_key) or set()
+    labels = [
+        label
+        for block_id, label, _codes, _rating_group in blocks
+        if block_id in selected
+    ]
+    return ", ".join(labels) if labels else "—"
+
+
+def _scatter_default_metric_index(metric_keys: list[str], preferred: str) -> int:
+    try:
+        return metric_keys.index(preferred)
+    except ValueError:
+        return 0
+
+
+def render_scatter_section(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+) -> None:
+    st.subheader("Scatter — xP Stats")
+    st.caption(
+        "Choose between **Regular Stats** (traditional pass volume) and "
+        f"**xP Stats** (xP, {IMPACT_PASS_ABBR} and special delivery types)."
+    )
+
+    if not all_players:
+        st.info("No players available.")
+        return
+
+    pos_col, player_col = st.columns([1, 1], gap="medium")
+    with pos_col:
+        with st.container(key="scatter_position_slicer"):
+            position_codes, position_groups = _render_position_block_slicer(
+                key_prefix="scatter",
+                state_key=SCATTER_POSITION_BLOCKS_KEY,
+                blocks=SCATTER_POSITION_BLOCKS,
+                block_map=SCATTER_POSITION_BLOCK_BY_ID,
+            )
+
+    if not position_codes and not position_groups:
+        st.info("Select a position to view the chart.")
+        return
+
+    highlight_player_id: str | None = None
+    with player_col:
+        with st.container(key="scatter_player_slicer"):
+            player_options = _player_analysis_options(
+                all_players,
+                progression_by_id,
+                position_codes=position_codes,
+                position_groups=position_groups,
+                xp_by_id=xp_by_id,
+            )
+            if player_options:
+                labels = [option[3] for option in player_options]
+                id_by_label = {option[3]: option[0] for option in player_options}
+                selected_label = st.selectbox(
+                    "Player",
+                    options=labels,
+                    key=SCATTER_HIGHLIGHT_PLAYER_KEY,
+                    placeholder="Select to highlight",
+                )
+                if selected_label:
+                    highlight_player_id = id_by_label[selected_label]
+            else:
+                st.info("No players available for the selected filters.")
+
+    type_keys = [key for key, _label in xstats.scatter_stat_type_options()]
+    type_labels = {key: label for key, label in xstats.scatter_stat_type_options()}
+    stat_type = st.selectbox(
+        "Metric type",
+        options=type_keys,
+        format_func=lambda key: type_labels[key],
+        key=SCATTER_STAT_TYPE_KEY,
+    )
+    if st.session_state.get(SCATTER_STAT_TYPE_PREV_KEY) != stat_type:
+        st.session_state.pop(SCATTER_X_METRIC_KEY, None)
+        st.session_state.pop(SCATTER_Y_METRIC_KEY, None)
+        st.session_state[SCATTER_STAT_TYPE_PREV_KEY] = stat_type
+
+    metric_options = xstats.scatter_metric_options_for_type(stat_type)
+    metric_keys = [key for key, _label in metric_options]
+    metric_labels = {key: label for key, label in metric_options}
+
+    axis_x_col, axis_y_col = st.columns(2, gap="small")
+    with axis_x_col:
+        x_key = st.selectbox(
+            "X axis",
+            options=metric_keys,
+            format_func=lambda key: metric_labels[key],
+            index=0,
+            key=SCATTER_X_METRIC_KEY,
+        )
+    with axis_y_col:
+        y_key = st.selectbox(
+            "Y axis",
+            options=metric_keys,
+            format_func=lambda key: metric_labels[key],
+            index=min(1, len(metric_keys) - 1),
+            key=SCATTER_Y_METRIC_KEY,
+        )
+
+    pool, thresholds = _scatter_pool_players(
+        all_players,
+        progression_by_id,
+        xp_by_id=xp_by_id,
+        position_codes=position_codes,
+        position_groups=position_groups,
+    )
+    if not pool:
+        st.info(
+            f"No eligible players (passes ≥ P{xstats.DISTANCE_INDEX_MIN_PASS_PERCENTILE} "
+            "at the position)."
+        )
+        return
+
+    position_label = _selected_position_blocks_label(
+        SCATTER_POSITION_BLOCKS_KEY,
+        blocks=SCATTER_POSITION_BLOCKS,
+    )
+    x_label = xstats.scatter_metric_label(x_key)
+    y_label = xstats.scatter_metric_label(y_key)
+
+    fig = build_stats_scatter_figure(
+        pool,
+        x_key=x_key,
+        y_key=y_key,
+        x_label=x_label,
+        y_label=y_label,
+        position_label=position_label,
+        highlight_player_id=highlight_player_id,
+    )
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False, "responsive": True},
+    )
+    min_passes_hint = ", ".join(
+        f"{position_group_label(group)}: ≥{threshold:.0f}"
+        for group, threshold in sorted(thresholds.items())
+        if any(str(row.get("position_group") or "CM") == group for row in pool)
+    )
+    highlight_hint = (
+        " · destaque = jogador selecionado acima"
+        if highlight_player_id
+        else ""
+    )
+    st.caption(
+        f"{len(pool)} eligible players · minimum P{xstats.DISTANCE_INDEX_MIN_PASS_PERCENTILE} "
+        f"({min_passes_hint or '—'})"
+        f"{highlight_hint}"
+    )
+
+
+def render_stats_section(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+) -> None:
+    st.subheader("Stats — xP")
+
+    if not all_players:
+        st.info("No players available.")
+        return
+
+    players_by_id = {str(p["player_id"]): p for p in all_players}
+    player_id = _render_shared_player_slicers(
+        all_players,
+        progression_by_id,
+        players_by_id,
+        xp_by_id=xp_by_id,
+        key_prefix="stats",
+        state_key=STATS_POSITION_BLOCKS_KEY,
+    )
+    if not player_id:
+        return
+
+    profile = (xp_by_id or {}).get(str(player_id))
+    if not profile:
+        st.warning("xP metrics unavailable for this player.")
+        return
+
+    group_label = position_group_label(str(profile.get("position_group") or "—"))
+    st.markdown('<div class="stats-shell">', unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="stats-player-head">{html.escape(str(profile.get("player_name", "—")))}</p>'
+        f'<p class="stats-player-meta">{html.escape(str(profile.get("team", "—")))} · '
+        f'{html.escape(str(profile.get("position", "—")))} · {html.escape(group_label)} · '
+        f"Bars = rank in group · Short {xstats.DISTANCE_BAND_LABELS['short']} · "
+        f"Long {xstats.DISTANCE_BAND_LABELS['long']}</p>",
+        unsafe_allow_html=True,
+    )
+    st.html(_build_stats_panel_html(profile), width="stretch")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_maps_section(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    xp_passes_by_player: dict,
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+) -> None:
+    st.subheader("Maps — Passes on the pitch")
+
+    if not all_players:
+        st.info("No players available.")
+        return
+
+    players_by_id = {str(p["player_id"]): p for p in all_players}
+
+    pos_col, player_col = st.columns([1, 1], gap="medium")
+    with pos_col:
+        with st.container(key="maps_position_slicer"):
+            position_codes, position_groups = _render_position_block_slicer(
+                key_prefix="maps",
+                state_key=MAPS_POSITION_BLOCKS_KEY,
+            )
+    if not position_codes and not position_groups:
+        st.info("Select a position to continue.")
+        return
+
+    player_id: str | None = None
+    with player_col:
+        with st.container(key="maps_player_slicer"):
+            player_options = _player_analysis_options(
+                all_players,
+                progression_by_id,
+                position_codes=position_codes,
+                position_groups=position_groups,
+                xp_by_id=xp_by_id,
+            )
+            if not player_options:
+                st.info("No players available for the selected filters.")
+                return
+            labels = [option[3] for option in player_options]
+            id_by_label = {option[3]: option[0] for option in player_options}
+            select_key = _player_select_widget_key("maps")
+            if st.session_state.get(select_key) not in labels:
+                st.session_state.pop(select_key, None)
+            selected_label = st.selectbox(
+                "Player",
+                options=labels,
+                key=select_key,
+                placeholder="Select a player",
+            )
+            if selected_label:
+                player_id = id_by_label[selected_label]
+    if not player_id:
+        st.info("Select a player to continue.")
+        return
+
+    player = (xp_by_id or {}).get(str(player_id)) or players_by_id.get(str(player_id))
+    if player is None:
+        st.warning("Could not load player profile.")
+        return
+
+    type_col, stat_col = st.columns([1, 1], gap="medium")
+    with type_col:
+        type_keys = [key for key, _label in xstats.maps_stat_type_options()]
+        type_labels = {key: label for key, label in xstats.maps_stat_type_options()}
+        stat_type = st.selectbox(
+            "Stat type",
+            options=type_keys,
+            format_func=lambda key: type_labels[key],
+            key=MAPS_STAT_TYPE_KEY,
+        )
+    if st.session_state.get(MAPS_STAT_TYPE_PREV_KEY) != stat_type:
+        st.session_state.pop(MAPS_SPECIAL_PASS_KEY, None)
+        st.session_state[MAPS_STAT_TYPE_PREV_KEY] = stat_type
+    with stat_col:
+        pass_options = xstats.maps_pass_options_for_type(stat_type)
+        pass_keys = [key for key, _label in pass_options]
+        pass_labels = {key: label for key, label in pass_options}
+        map_filter_key = st.selectbox(
+            "Stat",
+            options=pass_keys,
+            format_func=lambda key: pass_labels[key],
+            key=MAPS_SPECIAL_PASS_KEY,
+        )
+    map_category_label = xstats.maps_pass_type_label(map_filter_key)
+
+    st.markdown('<div class="pa-maps-compact">', unsafe_allow_html=True)
+    raw_passes = xp_passes_by_player.get(str(player_id))
+    round_keys, round_labels = _pass_map_round_options(raw_passes)
+    round_key = st.selectbox(
+        "Round",
+        options=round_keys,
+        format_func=lambda key: round_labels[key],
+        key=f"maps_round_{player_id}",
+    )
+    scoped_passes = _filter_pass_map_round(raw_passes, round_key)
+    passes_df = xstats.filter_passes_for_map(scoped_passes, map_filter_key)
+    if passes_df is None or passes_df.empty:
+        st.info("No completed passes for this player with the selected filter.")
+    else:
+        work = _maps_passes_table(
+            passes_df,
+            sort_by_residual=xstats.is_maps_top_residual_pass(map_filter_key),
+        )
+        player_name = str(player.get("player_name", "—"))
+        season_label = _pass_map_scope_label(round_key, round_labels)
+        fig_passes, fig_dest, pass_caption = _render_pass_map_figures(
+            work=work,
+            player_name=player_name,
+            map_filter_key=map_filter_key,
+            map_category_label=map_category_label,
+            season_label=season_label,
+            captions_language="en",
+        )
+        map_col, dest_col = st.columns(2, gap="small")
+        with map_col:
+            st.pyplot(fig_passes, clear_figure=True, use_container_width=True)
+            st.caption(pass_caption)
+        with dest_col:
+            st.pyplot(fig_dest, clear_figure=True, use_container_width=True)
+            st.caption("Destination heatmap · where the selected passes end")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_estudo_section() -> None:
+    """Experimental xP tab: compare hierarchical models 3 (dest) vs 4 (origin→dest)."""
+    st.subheader("Study — xP by rarity (models 3 vs 4)")
+
+    bundle = xpe.load_study_match_bundle(xpe.STUDY_MATCH_EVENT_ID)
+    meta = bundle.get("meta") or {}
+    passes = bundle.get("passes")
+    xp_grids_by_team = bundle.get("xp_grids_by_team") or {}
+    count_grids_by_team = bundle.get("count_grids_by_team") or {}
+    rankings_by_model = bundle.get("rankings_by_model") or {}
+    comparison = bundle.get("comparison")
+    distance_study = bundle.get("distance_study")
+    distance_study_by_player = bundle.get("distance_study_by_player")
+    grid_cfg = bundle.get("grid") or xpe.STUDY_GRID
+
+    if not meta or passes is None or passes.empty or not rankings_by_model:
+        st.warning("Could not load the study match data.")
+        return
+
+    match_title = xpe.match_label(meta)
+    home_team = str(meta.get("home_team", ""))
+    away_team = str(meta.get("away_team", ""))
+    alpha = float(meta.get("blend_alpha", xpe.XP_BLEND_ALPHA))
+    xp_max = float(meta.get("xp_pass_max", xpe.XP_PASS_MAX))
+
+    rank_m3 = rankings_by_model.get(xpe.XP_MODEL_HIER_DEST)
+    rank_m4 = rankings_by_model.get(xpe.XP_MODEL_HIER_OD)
+    if rank_m3 is None or rank_m3.empty or rank_m4 is None or rank_m4.empty:
+        st.warning("Rankings unavailable for models 3 and 4.")
+        return
+
+    st.markdown(
+        f"**Partida:** {match_title} · **Data:** {meta.get('match_date', '—')} · "
+        f"**ID:** `{meta.get('event_id', '—')}` · **global reference (α = {alpha:.2f})**"
+    )
+    st.caption(
+        f"**Model 3:** hierarchical smoothing by **destination 12×8** (global reference). "
+        f"**Model 4:** smoothing by **origin 12×8 → destination 12×8** (global reference). "
+        f"xP scaled from 0–{xp_max:.1f} (rarest cell = {xp_max:.1f}; other passes proportional). "
+        f"Pool global: Copa do Mundo ({meta.get('league_matches_world_cup', '—')}) + "
+        f"Brazil Serie A ({meta.get('league_matches_serie_a', '—')}) + "
+        f"Premier League ({meta.get('league_matches_premier_league', '—')}) + "
+        f"Italy Serie A ({meta.get('league_matches_italia_seriea', '—')}) + "
+        f"La Liga ({meta.get('league_matches_laliga', '—')}) + "
+        f"Bundesliga ({meta.get('league_matches_bundesliga', '—')}) + "
+        f"Ligue 1 ({meta.get('league_matches_ligue1', '—')}) = "
+        f"{meta.get('league_matches', '—')} matches · "
+        f"{meta.get('league_passes', 0):,} completed passes."
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Passes (live ball)", f"{meta.get('live_ball_passes', 0):,}")
+    c2.metric(f"Completados · {home_team[:10]}", f"{meta.get('home_completed', 0):,}")
+    c3.metric(f"Completados · {away_team[:10]}", f"{meta.get('away_completed', 0):,}")
+    c4.metric("Players", f"{meta.get('players', 0)}")
+    c5.metric("xP max", f"{xp_max:.1f}")
+
+    if comparison is not None and not comparison.empty:
+        st.markdown("**Models 3 vs 4 comparison (match total xP)**")
+        comp_display = comparison[
+            [
+                "player_name",
+                "position",
+                "team",
+                "passes_completed",
+                "xp_hierarchical_dest",
+                "rank_hierarchical_dest",
+                "xp_hierarchical_od",
+                "rank_hierarchical_od",
+            ]
+        ].head(15).copy()
+        comp_display = comp_display.rename(columns={
+            "player_name": "Player",
+            "position": "Pos",
+            "team": "Team",
+            "passes_completed": "Passes",
+            "xp_hierarchical_dest": "xP (3)",
+            "rank_hierarchical_dest": "#3",
+            "xp_hierarchical_od": "xP (4)",
+            "rank_hierarchical_od": "#4",
+        })
+        st.dataframe(
+            comp_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "xP (3)": st.column_config.NumberColumn(format="%.2f"),
+                "xP (4)": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+        with st.expander("How to read the models"):
+            st.markdown(
+                f"- **Model 3:** destination rarity (12×8 grid), blended with "
+                f"`{alpha:.2f}·match + {1-alpha:.2f}·league average`.\n"
+                f"- **Model 4:** origin→destination route rarity "
+                f"(origin 12×8, destination 12×8), same match/league blend.\n"
+                f"- **xP scale:** the rarest cell/route is worth **{xp_max:.1f}**; "
+                f"other passes are proportional fractions (cap {xp_max:.1f} per pass)."
+            )
+
+    if distance_study is not None and not distance_study.empty:
+        st.markdown(f"**xP and {IMPACT_PASS_ABBR} by distance (match · legacy fixed threshold)**")
+        thr_m3 = xpe.THREAT_XP_THRESHOLDS[xpe.XP_MODEL_HIER_DEST]
+        thr_m4 = xpe.THREAT_XP_THRESHOLDS[xpe.XP_MODEL_HIER_OD]
+        dist_display = distance_study[
+            [
+                "band_label", "passes", "mean_xp_m3", "mean_xp_m4",
+                "threat_m3", "threat_m4", "pct_threat_m3", "pct_threat_m4",
+            ]
+        ].copy()
+        dist_display = dist_display.rename(columns={
+            "band_label": "Distance",
+            "passes": "Passes",
+            "mean_xp_m3": "Mean xP (3)",
+            "mean_xp_m4": "Mean xP (4)",
+            "threat_m3": f"Impact (3 >{thr_m3})",
+            "threat_m4": f"Impact (4 >{thr_m4})",
+            "pct_threat_m3": "% Impact (3)",
+            "pct_threat_m4": "% Impact (4)",
+        })
+        st.dataframe(
+            dist_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Mean xP (3)": st.column_config.NumberColumn(format="%.3f"),
+                "Mean xP (4)": st.column_config.NumberColumn(format="%.3f"),
+                "% Impact (3)": st.column_config.NumberColumn(format="%.1f"),
+                "% Impact (4)": st.column_config.NumberColumn(format="%.1f"),
+            },
+        )
+        with st.expander(f"{IMPACT_PASS_ABBR} by player and distance"):
+            if distance_study_by_player is not None and not distance_study_by_player.empty:
+                player_display = distance_study_by_player[
+                    [
+                        "player_name", "team", "band_label", "passes",
+                        "mean_xp_m3", "mean_xp_m4", "threat_m3", "threat_m4",
+                    ]
+                ].copy()
+                player_display = player_display.rename(columns={
+                    "player_name": "Player",
+                    "team": "Team",
+                    "band_label": "Distance",
+                    "passes": "Passes",
+                    "mean_xp_m3": "Mean xP (3)",
+                    "mean_xp_m4": "Mean xP (4)",
+                    "threat_m3": f"Impact (3 >{thr_m3})",
+                    "threat_m4": f"Impact (4 >{thr_m4})",
+                })
+                st.dataframe(player_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("No per-player data.")
+
+    rank_col, surface_col = st.columns([1.05, 1], gap="medium")
+    with rank_col:
+        st.markdown("**Rankings lado a lado**")
+        r3_col, r4_col = st.columns(2, gap="small")
+        with r3_col:
+            st.caption(xpe.XP_MODEL_LABELS[xpe.XP_MODEL_HIER_DEST])
+            display_m3 = rank_m3[
+                ["rank", "player_name", "team", "xp_total", "xp_per_pass"]
+            ].head(12).copy()
+            display_m3 = display_m3.rename(columns={
+                "rank": "#",
+                "player_name": "Player",
+                "team": "Team",
+                "xp_total": "xP",
+                "xp_per_pass": "xP/p",
+            })
+            st.dataframe(display_m3, use_container_width=True, hide_index=True)
+        with r4_col:
+            st.caption(xpe.XP_MODEL_LABELS[xpe.XP_MODEL_HIER_OD])
+            display_m4 = rank_m4[
+                ["rank", "player_name", "team", "xp_total", "xp_per_pass"]
+            ].head(12).copy()
+            display_m4 = display_m4.rename(columns={
+                "rank": "#",
+                "player_name": "Player",
+                "team": "Team",
+                "xp_total": "xP",
+                "xp_per_pass": "xP/p",
+            })
+            st.dataframe(display_m4, use_container_width=True, hide_index=True)
+
+    with surface_col:
+        st.markdown("**xP destination 12×8 surface (model 3)**")
+        surf_home, surf_away = st.columns(2, gap="small")
+        home_xp, home_count = xpe.team_surface_for_player(
+            xp_grids_by_team,
+            count_grids_by_team,
+            team=home_team,
+            dest_rows=grid_cfg.dest_rows,
+            dest_cols=grid_cfg.dest_cols,
+        )
+        away_xp, away_count = xpe.team_surface_for_player(
+            xp_grids_by_team,
+            count_grids_by_team,
+            team=away_team,
+            dest_rows=grid_cfg.dest_rows,
+            dest_cols=grid_cfg.dest_cols,
+        )
+        with surf_home:
+            fig_home = draw_xp_destination_surface(
+                home_xp,
+                home_count,
+                title=f"{home_team}",
+                dest_cols=grid_cfg.dest_cols,
+                dest_rows=grid_cfg.dest_rows,
+            )
+            st.pyplot(fig_home, clear_figure=True, use_container_width=True)
+        with surf_away:
+            fig_away = draw_xp_destination_surface(
+                away_xp,
+                away_count,
+                title=f"{away_team}",
+                dest_cols=grid_cfg.dest_cols,
+                dest_rows=grid_cfg.dest_rows,
+            )
+            st.pyplot(fig_away, clear_figure=True, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("**Top 5 xP passes — models 3 and 4**")
+
+    options: list[tuple[str, str]] = []
+    for row in rank_m3.itertuples(index=False):
+        m4_row = rank_m4.loc[rank_m4["player_id"] == str(row.player_id)]
+        xp4 = float(m4_row["xp_total"].iloc[0]) if not m4_row.empty else 0.0
+        label = f"{row.player_name} ({row.team}) — xP₃ {row.xp_total:.2f} · xP₄ {xp4:.2f}"
+        options.append((str(row.player_id), label))
+
+    labels = [label for _, label in options]
+    id_by_label = {label: pid for pid, label in options}
+
+    if ESTUDO_PLAYER_SELECT_KEY not in st.session_state and labels:
+        st.session_state[ESTUDO_PLAYER_SELECT_KEY] = labels[0]
+
+    selected_label = st.selectbox(
+        "Match player",
+        options=labels,
+        key=ESTUDO_PLAYER_SELECT_KEY,
+    )
+    player_id = id_by_label.get(selected_label)
+    if not player_id:
+        return
+
+    player_name = str(rank_m3.loc[rank_m3["player_id"] == player_id, "player_name"].iloc[0])
+    player_team = str(rank_m3.loc[rank_m3["player_id"] == player_id, "team"].iloc[0])
+    team_xp, _ = xpe.team_surface_for_player(
+        xp_grids_by_team,
+        count_grids_by_team,
+        team=player_team,
+        dest_rows=grid_cfg.dest_rows,
+        dest_cols=grid_cfg.dest_cols,
+    )
+    top_m3 = xpe.top_xp_passes_for_player(passes, player_id, n=5, model=xpe.XP_MODEL_HIER_DEST)
+    top_m4 = xpe.top_xp_passes_for_player(passes, player_id, n=5, model=xpe.XP_MODEL_HIER_OD)
+
+    table_col, maps_col = st.columns([0.85, 1.15], gap="medium")
+    with table_col:
+        t3_col, t4_col = st.columns(2, gap="small")
+        with t3_col:
+            st.caption("Model 3 — destination")
+            if top_m3.empty:
+                st.info("No passes.")
+            else:
+                table3 = top_m3[["xp_value", "pass_distance"]].copy()
+                table3.insert(0, "#", range(1, len(table3) + 1))
+                table3 = table3.rename(columns={"xp_value": "xP", "pass_distance": "Dist"})
+                st.dataframe(table3, use_container_width=True, hide_index=True)
+        with t4_col:
+            st.caption("Model 4 — origin→destination")
+            if top_m4.empty:
+                st.info("No passes.")
+            else:
+                table4 = top_m4[["xp_value", "pass_distance"]].copy()
+                table4.insert(0, "#", range(1, len(table4) + 1))
+                table4 = table4.rename(columns={"xp_value": "xP", "pass_distance": "Dist"})
+                st.dataframe(table4, use_container_width=True, hide_index=True)
+
+    with maps_col:
+        map3_col, map4_col = st.columns(2, gap="small")
+        with map3_col:
+            fig_m3 = draw_top_xp_passes_map(
+                top_m3,
+                player_name=player_name,
+                match_label=f"M3 · {match_title}",
+                xp_grid=team_xp,
+                dest_cols=grid_cfg.dest_cols,
+                dest_rows=grid_cfg.dest_rows,
+            )
+            st.pyplot(fig_m3, clear_figure=True, use_container_width=True)
+        with map4_col:
+            fig_m4 = draw_top_xp_passes_map(
+                top_m4,
+                player_name=player_name,
+                match_label=f"M4 · {match_title}",
+                xp_grid=team_xp,
+                dest_cols=grid_cfg.dest_cols,
+                dest_rows=grid_cfg.dest_rows,
+            )
+            st.pyplot(fig_m4, clear_figure=True, use_container_width=True)
+
+
+def _filter_pa_pool(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    league: str,
+    field: str,
+    age_min: int | None,
+    age_max: int | None,
+) -> list[dict]:
+    """Filter the midfielder pool by league, field orientation and age band."""
+    out: list[dict] = []
+    for player in all_players:
+        pid = str(player["player_id"])
+        if league != "all" and str(player.get("league_source") or "") != league:
+            continue
+        profile = progression_by_id.get(pid, player)
+        group = str(profile.get("position_group") or player.get("position_group") or "")
+        if field == "offensive" and group != "attacking_midfielders":
+            continue
+        if field == "defensive" and group != "central_midfielders":
+            continue
+        if age_min is not None or age_max is not None:
+            age = player.get("age")
+            if age is None:
+                continue
+            age_val = int(age)
+            if age_min is not None and age_val < age_min:
+                continue
+            if age_max is not None and age_val > age_max:
+                continue
+        out.append(player)
+    return out
+
+
+def _render_pa_filter_card(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None,
+) -> tuple[str | None, bool, bool]:
+    """Single-player filter bar for Filip Krovinović with optional scatter/maps."""
+    target = next(
+        (p for p in all_players if str(p.get("player_id")) == TARGET_PLAYER_ID),
+        None,
+    )
+    if target is None:
+        target = progression_by_id.get(TARGET_PLAYER_ID)
+    player_name = str((target or {}).get("player_name", TARGET_PLAYER_NAME))
+    team = str((target or {}).get("team", "—"))
+    league = str((target or {}).get("league", "—"))
+
+    with st.container(key="pa_filter_card"):
+        st.markdown(
+            '<div class="pa-filter-head">'
+            '<span class="pa-filter-title">'
+            '<span class="pa-filter-ic"><i class="fa-solid fa-user"></i></span>'
+            f"{html.escape(player_name)}</span>"
+            f'<span class="pa-filter-sub">{html.escape(team)} · {html.escape(league)} · '
+            "Comparação com meio-campistas das principais ligas europeias.</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        _, col_views = st.columns([2.4, 1.0], gap="medium")
+        with col_views:
+            selected_views = st.segmented_control(
+                "Visualizações",
+                options=[PA_VIEW_SCATTER, PA_VIEW_MAPS],
+                format_func=lambda key: PA_VIEW_LABELS[key],
+                selection_mode="multi",
+                key=PA_VIEW_SELECT_KEY,
+                help="Abra gráficos e mapas apenas quando precisar — mantém o app leve.",
+            ) or []
+        show_scatter = PA_VIEW_SCATTER in selected_views
+        show_maps = PA_VIEW_MAPS in selected_views
+
+    return TARGET_PLAYER_ID, show_scatter, show_maps
+
+
+@st.cache_data(show_spinner="Carregando mapas de passe…")
+def load_player_analysis_xp_passes(_cache_version: int = XP_DATA_CACHE_VERSION):
+    return ke.merge_xp_passes_grouped(xe.load_european_league_xp_passes_grouped(_cache_version))
+
+
+@st.cache_data(show_spinner="Agregando passes dos meio-campistas…")
+def load_midfielder_pass_maps_analysis(
+    top_n: int,
+    _xp_cache: int = XP_DATA_CACHE_VERSION,
+) -> dict:
+    """Aggregate destination volume and mean xP for the top-N midfielders by passes."""
+    season = xe.load_european_league_season_passes(_xp_cache)
+    if season is None or season.empty:
+        return {
+            "count_grid": None,
+            "mean_xp_grid": None,
+            "total_passes": 0,
+            "quadrant_stats": [],
+            "player_count": 0,
+            "min_passes_cutoff": 0,
+        }
+
+    completed = season[season["is_won"] & season["has_end"]].copy()
+    if completed.empty:
+        return {
+            "count_grid": None,
+            "mean_xp_grid": None,
+            "total_passes": 0,
+            "quadrant_stats": [],
+            "player_count": 0,
+            "min_passes_cutoff": 0,
+        }
+
+    pool = _top_midfielder_pass_pool(completed, top_n)
+    agg = xpe.aggregate_pass_destination_grids(pool["passes"])
+    agg["player_count"] = pool["player_count"]
+    agg["min_passes_cutoff"] = pool["min_passes_cutoff"]
+    return agg
+
+
+def _top_midfielder_pass_pool(completed: pd.DataFrame, top_n: int) -> dict:
+    """Completed passes restricted to the top-N midfielders by pass volume."""
+    pass_counts = (
+        completed.groupby("player_id", sort=False)
+        .size()
+        .sort_values(ascending=False)
+    )
+    head = pass_counts.head(int(top_n))
+    top_ids = {str(pid) for pid in head.index}
+    return {
+        "passes": completed[completed["player_id"].astype(str).isin(top_ids)],
+        "player_count": len(top_ids),
+        "min_passes_cutoff": int(head.min()) if len(head) else 0,
+    }
+
+
+@st.cache_data(show_spinner="Agregando rotas por célula do grid…")
+def load_midfielder_cell_heatmaps(
+    top_n: int,
+    _xp_cache: int = XP_DATA_CACHE_VERSION,
+    _map_cache: int = INTERACTIVE_CELL_MAP_CACHE_VERSION,
+) -> dict:
+    """Destination heatmaps (volume and mean xP) for passes leaving each 12x8 cell."""
+    _ = _map_cache
+    season = xe.load_european_league_season_passes(_xp_cache)
+    if season is None or season.empty:
+        return {}
+    completed = season[season["is_won"] & season["has_end"]]
+    if completed.empty:
+        return {}
+    pool = _top_midfielder_pass_pool(completed, top_n)
+    return xpe.build_player_cell_heatmap_bundle(pool["passes"])
+
+
+def _build_interactive_cell_map_html(analysis: dict) -> str:
+    """Build the Plotly iframe HTML, reloading the helper module on Streamlit Cloud.
+
+    A stale module object can survive hot reloads and still expose the old
+    quadrant-based API even after app.py was updated.
+    """
+    import importlib
+
+    import xp_maps_interactive as xmi
+
+    importlib.reload(xmi)
+    builder = getattr(xmi, "build_cell_map_html", None)
+    if builder is None:
+        raise AttributeError(
+            "xp_maps_interactive.build_cell_map_html is missing after reload — "
+            "redeploy the app so xp_maps_interactive.py is on the server."
+        )
+    return builder(
+        analysis,
+        plot_height=480,
+        player_plot_height=460,
+    )
+
+
+def _fmt_int_ptbr(value: int) -> str:
+    return f"{int(value):,}".replace(",", ".")
+
+
+def _render_interactive_cell_map(top_n: int) -> None:
+    """Aggregate hover map (all athletes) + per-player O→D route explorer."""
+    analysis = load_midfielder_cell_heatmaps(top_n)
+    if not analysis or not analysis.get("origins"):
+        st.info("Rotas por célula indisponíveis para esta base.")
+        return
+    if "cols" not in analysis and "dest_cols" in analysis:
+        st.warning(
+            "Cache do mapa interativo desatualizado. Reinicie o app no Streamlit Cloud "
+            "(Manage app → Reboot) para carregar o grid 12×8."
+        )
+        return
+
+    cols = int(analysis.get("cols") or 0)
+    rows = int(analysis.get("rows") or 0)
+    st.markdown(
+        '<div class="pa-ondemand-head">'
+        '<span class="pa-ondemand-ic"><i class="fa-solid fa-hand-pointer"></i></span>'
+        f"Mapa interativo — grid {cols}×{rows}</div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        map_html = _build_interactive_cell_map_html(analysis)
+    except AttributeError as exc:
+        st.error(
+            "Não foi possível carregar o mapa interativo — o módulo `xp_maps_interactive` "
+            "parece desatualizado no servidor. Reinicie o app no Streamlit Cloud."
+        )
+        st.caption(str(exc))
+        return
+    components.html(
+        map_html,
+        height=XP_CELL_MAP_HEIGHT,
+        scrolling=True,
+    )
+    st.caption(
+        f"Mapa superior: todos os atletas agregados — passe o mouse por uma célula de origem "
+        f"para ver os destinos. Mapa inferior: selecione um jogador para ver destinos e as "
+        "rotas O→D mais comuns e com maior xP gerado. "
+        f"Células com menos de {int(analysis.get('min_origin_passes') or 0)} "
+        "passes de saída não viram origem."
+    )
+
+
+def render_xp_maps_analysis_tab() -> None:
+    """Visual answer: where midfielder passes are most common vs. most rare (xP)."""
+    st.subheader("xP — Maps Analysis")
+    st.markdown(
+        "<p style='color:#94a3b8;font-size:0.92rem;margin:0 0 0.75rem 0;'>"
+        "O xP mede <strong>raridade</strong>: passes que terminam em zonas pouco frequentes "
+        "valem mais. Aqui você vê, de forma simples, <strong>onde os meio-campistas mais "
+        "passam</strong> (volume) e <strong>onde os passes são mais raros</strong> "
+        "(xP médio por destino), célula a célula no grid do modelo."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    top_n = int(xstats.XP_PROFILE_TOP_PASS_POOL_SIZE)
+    analysis = load_midfielder_pass_maps_analysis(top_n)
+    count_grid = analysis.get("count_grid")
+    mean_xp_grid = analysis.get("mean_xp_grid")
+    total_passes = int(analysis.get("total_passes") or 0)
+    player_count = int(analysis.get("player_count") or 0)
+    min_cutoff = int(analysis.get("min_passes_cutoff") or 0)
+
+    if count_grid is None or mean_xp_grid is None or total_passes <= 0:
+        st.warning("Não foi possível carregar os passes dos meio-campistas para este mapa.")
+        return
+
+    st.caption(
+        f"Base: top {player_count} meio-campistas com mais passes completados "
+        f"(mín. {_fmt_int_ptbr(min_cutoff)} passes) · "
+        f"{_fmt_int_ptbr(total_passes)} passes agregados · "
+        "5 ligas europeias (PL, Serie A, La Liga, Bundesliga, Ligue 1)."
+    )
+
+    _render_interactive_cell_map(top_n)
+
+    st.markdown(
+        '<div class="pa-ondemand-head">'
+        '<span class="pa-ondemand-ic"><i class="fa-solid fa-layer-group"></i></span>'
+        "Visão agregada — volume e raridade por destino</div>",
+        unsafe_allow_html=True,
+    )
+
+    map_title_common = f"Passes mais comuns · destino ({player_count} MC)"
+    map_title_rare = f"Passes mais raros · xP médio no destino ({player_count} MC)"
+    fig_common = draw_midfielder_common_passes_map(
+        count_grid,
+        title=map_title_common,
+    )
+    fig_rare = draw_midfielder_rare_passes_map(
+        mean_xp_grid,
+        title=map_title_rare,
+    )
+
+    col_common, col_rare = st.columns(2, gap="medium")
+    with col_common:
+        st.pyplot(fig_common, clear_figure=True, use_container_width=True)
+        st.caption(
+            "Verde mais intenso = destino mais frequente. "
+            "Responde: para onde os meio-campistas mais passam?"
+        )
+    with col_rare:
+        st.pyplot(fig_rare, clear_figure=True, use_container_width=True)
+        st.caption(
+            "Vermelho mais intenso = destino com passes mais raros (xP médio maior). "
+            "Responde: quais zonas geram passes menos comuns?"
+        )
+
+    quadrant_stats = analysis.get("quadrant_stats") or []
+    if quadrant_stats:
+        st.markdown("**Volume por quadrante (destino dos passes)**")
+        quad_df = pd.DataFrame(quadrant_stats)[["quadrant", "passes", "share_pct"]].rename(
+            columns={
+                "quadrant": "Quadrante",
+                "passes": "Passes",
+                "share_pct": "% do total",
+            }
+        )
+        st.dataframe(
+            quad_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Passes": st.column_config.NumberColumn(format="%d"),
+                "% do total": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+
+    with st.expander("Como ler estes mapas"):
+        st.markdown(
+            "- **Mapa interativo:** passe o mouse por um quadrante e o heatmap 12×8 passa a "
+            "mostrar apenas o destino dos passes que **saem** dele. Alterne a cor entre "
+            "**xP médio** e **volume (%)**.\n"
+            "- **Marcadores:** o círculo aponta a célula mais comum e o losango a mais rara "
+            "de cada quadrante de destino.\n"
+            "- **Painel lateral:** compara, para cada um dos quatro quadrantes de destino, "
+            "quanto do volume vai para lá e com qual xP médio.\n"
+            "- **Mapa de volume (verde):** conta quantos passes terminam em cada célula. "
+            "Quanto mais verde, mais **comum** é passar para aquela zona.\n"
+            "- **Mapa de xP (vermelho):** xP médio dos passes que terminam em cada célula. "
+            "Quanto mais vermelho, mais **raro** é o destino no modelo global.\n"
+            "- **Quadrantes:** o campo é dividido em defensivo/ofensivo (eixo x) e "
+            "esquerda/direita (eixo y).\n"
+            f"- **Amostra:** apenas os {top_n} meio-campistas com maior volume de passes — "
+            "o mesmo recorte usado no xP Profile."
+        )
+
+
+def _render_pa_scatter_panel(
+    all_players: list[dict],
+    progression_by_id: dict[str, dict],
+    *,
+    xp_by_id: dict[str, dict] | None,
+    highlight_player_id: str | None,
+) -> None:
+    """Scatter over every midfielder — deliberately ignores the filter-bar selection."""
+    pool_ids = {str(p["player_id"]) for p in all_players}
+    pool_xp = {pid: prof for pid, prof in (xp_by_id or {}).items() if pid in pool_ids}
+
+    type_keys = [key for key, _label in xstats.scatter_stat_type_options()]
+    type_labels = {key: label for key, label in xstats.scatter_stat_type_options()}
+    stat_type = st.selectbox(
+        "Tipo de métrica",
+        options=type_keys,
+        format_func=lambda key: type_labels[key],
+        key="pa_scatter_stat_type",
+    )
+    if st.session_state.get("pa_scatter_stat_type_prev") != stat_type:
+        st.session_state.pop("pa_scatter_x", None)
+        st.session_state.pop("pa_scatter_y", None)
+        st.session_state["pa_scatter_stat_type_prev"] = stat_type
+
+    metric_options = xstats.scatter_metric_options_for_type(stat_type)
+    metric_keys = [key for key, _label in metric_options]
+    metric_labels = {key: label for key, label in metric_options}
+    axis_x, axis_y = st.columns(2, gap="small")
+    with axis_x:
+        x_key = st.selectbox(
+            "Eixo X",
+            options=metric_keys,
+            format_func=lambda key: metric_labels[key],
+            index=0,
+            key="pa_scatter_x",
+        )
+    with axis_y:
+        y_key = st.selectbox(
+            "Eixo Y",
+            options=metric_keys,
+            format_func=lambda key: metric_labels[key],
+            index=min(1, len(metric_keys) - 1),
+            key="pa_scatter_y",
+        )
+
+    all_codes, all_groups = _all_position_filters()
+    scatter_pool, _thresholds = _scatter_pool_players(
+        all_players,
+        progression_by_id,
+        xp_by_id=pool_xp,
+        position_codes=all_codes,
+        position_groups=all_groups,
+    )
+    if not scatter_pool:
+        st.info(
+            f"Sem jogadores elegíveis (passes ≥ P{xstats.DISTANCE_INDEX_MIN_PASS_PERCENTILE} na posição)."
+        )
+        return
+
+    fig = build_stats_scatter_figure(
+        scatter_pool,
+        x_key=x_key,
+        y_key=y_key,
+        x_label=xstats.scatter_metric_label(x_key),
+        y_label=xstats.scatter_metric_label(y_key),
+        position_label="Meio-campistas",
+        highlight_player_id=highlight_player_id,
+    )
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False, "responsive": True},
+    )
+    st.caption(
+        f"{len(scatter_pool)} meio-campistas elegíveis (todas as ligas, sem os filtros acima) · "
+        "destaque = jogador selecionado."
+    )
+
+
+def _render_pa_maps_panel(player: dict, player_id: str) -> None:
+    xp_passes_by_player = load_player_analysis_xp_passes()
+
+    type_col, stat_col = st.columns([1, 1], gap="medium")
+    with type_col:
+        type_keys = [key for key, _label in xstats.maps_stat_type_options()]
+        type_labels = {key: label for key, label in xstats.maps_stat_type_options()}
+        stat_type = st.selectbox(
+            "Tipo de estatística",
+            options=type_keys,
+            format_func=lambda key: type_labels[key],
+            key="pa_maps_stat_type",
+        )
+    if st.session_state.get("pa_maps_stat_type_prev") != stat_type:
+        st.session_state.pop("pa_maps_special", None)
+        st.session_state["pa_maps_stat_type_prev"] = stat_type
+    with stat_col:
+        pass_options = xstats.maps_pass_options_for_type(stat_type)
+        pass_keys = [key for key, _label in pass_options]
+        pass_labels = {key: label for key, label in pass_options}
+        map_filter_key = st.selectbox(
+            "Estatística",
+            options=pass_keys,
+            format_func=lambda key: pass_labels[key],
+            key="pa_maps_special",
+        )
+    map_category_label = xstats.maps_pass_type_label(map_filter_key)
+
+    st.markdown('<div class="pa-maps-compact">', unsafe_allow_html=True)
+    raw_passes = xp_passes_by_player.get(str(player_id))
+    round_keys, round_labels = _pass_map_round_options(raw_passes)
+    round_key = st.selectbox(
+        "Rodada",
+        options=round_keys,
+        format_func=lambda key: round_labels[key],
+        key=f"pa_maps_round_{player_id}",
+    )
+    scoped_passes = _filter_pass_map_round(raw_passes, round_key)
+    passes_df = xstats.filter_passes_for_map(scoped_passes, map_filter_key)
+    if passes_df is None or passes_df.empty:
+        st.info("Nenhum passe completo para este jogador com o filtro selecionado.")
+    else:
+        work = _maps_passes_table(
+            passes_df,
+            sort_by_residual=xstats.is_maps_top_residual_pass(map_filter_key),
+        )
+        player_name = str(player.get("player_name", "—"))
+        season_label = _pass_map_scope_label(round_key, round_labels)
+        fig_passes, fig_dest, pass_caption = _render_pass_map_figures(
+            work=work,
+            player_name=player_name,
+            map_filter_key=map_filter_key,
+            map_category_label=map_category_label,
+            season_label=season_label,
+            captions_language="pt",
+        )
+        map_col, dest_col = st.columns(2, gap="small")
+        with map_col:
+            st.pyplot(fig_passes, clear_figure=True, use_container_width=True)
+            st.caption(pass_caption)
+        with dest_col:
+            st.pyplot(fig_dest, clear_figure=True, use_container_width=True)
+            st.caption("Mapa de calor de destino · onde os passes terminam")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_player_analysis_section(
+    all_players: list[dict],
+    passes_by_player: dict,
+    progression_by_id: dict[str, dict],
+    pass_by_id: dict[str, dict],
+    carry_by_id: dict[str, dict],
+    progression_pool_by_position: dict[str, list[dict]],
+    pass_pool_by_position: dict[str, list[dict]],
+    carry_pool_by_position: dict[str, list[dict]],
+    *,
+    xp_by_id: dict[str, dict] | None = None,
+) -> None:
+    if not all_players:
+        st.info("No players available.")
+        return
+
+    st.markdown('<div class="pa-shell">', unsafe_allow_html=True)
+
+    player_id, show_scatter, show_maps = _render_pa_filter_card(
+        all_players,
+        progression_by_id,
+        xp_by_id=xp_by_id,
+    )
+
+    if not player_id:
+        st.info("Selecione um jogador na barra de filtros para ver a análise.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    player = _resolve_progression_analysis_player(
+        player_id,
+        progression_by_id,
+        pass_by_id,
+        carry_by_id,
+        progression_pool_by_position,
+        pass_pool_by_position,
+        carry_pool_by_position,
+    )
+    if player is None:
+        st.warning("Não foi possível montar o perfil deste jogador.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    player = pp.enrich_player_general_profile(player)
+    xp_profile = (xp_by_id or {}).get(str(player_id))
+
+    st.markdown('<div class="pa-profile-divider"></div>', unsafe_allow_html=True)
+
+    origin_heatmap_b64: str | None = None
+    passes_df = passes_by_player.get(player_id)
+    xp_passes_df = load_player_analysis_xp_passes().get(str(player_id))
+    if passes_df is not None and not passes_df.empty:
+        fig_origin = draw_action_origin_smooth_heatmap(
+            passes_df,
+            None,
+            str(player.get("player_name", "")),
+            profile=True,
+        )
+        origin_heatmap_b64 = _fig_to_b64(fig_origin)
+
+    with st.container(key="pa_subtabs"):
+        tab_profile, tab_compare = st.tabs(["  Player Profile  ", "  Compare  "])
+        with tab_profile:
+            render_player_analysis_profile(
+                player,
+                xp_profile=xp_profile,
+                xp_passes_df=xp_passes_df,
+                scout_section_specs=PROGRESSION_SCOUT_SECTION_SPECS,
+                pillar_labels=_PROGRESSION_RADAR_METRIC_LABELS,
+                origin_heatmap_b64=origin_heatmap_b64,
+                label_fn=pg_analyst_metric_label,
+                tooltip_fn=pg_metric_tooltip,
+                rank_in_group_fn=pg_rank_in_group_label,
+                fmt_pct_fn=pg_fmt_pct,
+                fmt_stat_fn=pg_fmt_stat_value,
+                confidence_minutes=RATING_CONFIDENCE_MINUTES,
+                confidence_passes=RATING_CONFIDENCE_PASSES,
+            )
+        with tab_compare:
+            st.markdown(
+                '<div class="pa-compare-hero">'
+                '<span class="pa-compare-hero-icon"><i class="fa-solid fa-code-compare"></i></span>'
+                '<span class="pa-compare-hero-text">'
+                '<span class="pa-compare-hero-title">Compare players</span>'
+                '<span class="pa-compare-hero-sub">Profile, heatmaps and key metrics side by side</span>'
+                "</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if xp_by_id:
+                _render_xp_comparison_panel(
+                    player,
+                    all_players=all_players,
+                    progression_by_id=progression_by_id,
+                    pass_by_id=pass_by_id,
+                    xp_by_id=xp_by_id,
+                    passes_by_player=passes_by_player,
+                )
+            else:
+                st.info("xP metrics unavailable for comparison.")
+
+    if show_scatter:
+        st.markdown("---")
+        st.markdown(
+            '<div class="pa-ondemand-head">'
+            '<span class="pa-ondemand-ic"><i class="fa-solid fa-braille"></i></span>'
+            "Scatter — comparação com todos os meio-campistas</div>",
+            unsafe_allow_html=True,
+        )
+        # Scatter always compares the full pool: the filter bar only drives the
+        # player pick and the profile above, never the comparison universe.
+        _render_pa_scatter_panel(
+            all_players,
+            progression_by_id,
+            xp_by_id=xp_by_id,
+            highlight_player_id=player_id,
+        )
+
+    if show_maps:
+        st.markdown("---")
+        st.markdown(
+            '<div class="pa-ondemand-head">'
+            '<span class="pa-ondemand-ic"><i class="fa-solid fa-location-dot"></i></span>'
+            f"Mapas de passe — {html.escape(str(player.get('player_name', '—')))}</div>",
+            unsafe_allow_html=True,
+        )
+        _render_pa_maps_panel(player, player_id)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_rating_section(
+    rated: list[dict],
+    *,
+    selected_player_id: str | None,
+    rating_key: str = "pass_rating",
+) -> None:
+    render_rating_board(
+        _rating_groups_from_rated(rated, rating_key=rating_key),
+        selected_player_id=selected_player_id,
+        rating_key=rating_key,
+    )
+
+
+def render_combined_rating_section(
+    progression_rated: list[dict],
+    pass_rated: list[dict],
+    carry_rated: list[dict],
+    *,
+    selected_player_id: str | None,
+) -> None:
+    rank_overall, rank_passes, rank_carries = st.tabs(["Overall", "Passes", "Carries"])
+    with rank_overall:
+        render_rating_board(
+            _progression_rating_groups_from_rated(progression_rated),
+            selected_player_id=selected_player_id,
+            overall=True,
+        )
+    with rank_passes:
+        render_rating_section(pass_rated, selected_player_id=selected_player_id, rating_key="pass_rating")
+    with rank_carries:
+        render_rating_section(carry_rated, selected_player_id=selected_player_id, rating_key="pass_rating")
+
+
+def _comparison_metrics_html(
+    target: dict,
+    similar: dict,
+    *,
+    target_league: str,
+    similar_league: str,
+    target_pct: dict[str, float],
+    similar_pct: dict[str, float],
+) -> str:
+    rows = [
+        '<div class="player-card">',
+        '<div class="cmp-row cmp-row-head">',
+        "<span>Metric</span>",
+        f"<span>{html.escape(target_league)}</span>",
+        f"<span>{html.escape(similar_league)}</span>",
+        "</div>",
+    ]
+    for section_name, section_keys in sim.SIMILARITY_COMPARE_SECTIONS:
+        rows.append(f'<div class="cmp-section-title">{html.escape(section_name)}</div>')
+        for key in section_keys:
+            label = _similarity_metric_label_html(key)
+            t_delta = ""
+            s_delta = _cmp_delta_compare_html(target_pct.get(key), similar_pct.get(key))
+            t_val = html.escape(sim.fmt_percentile_value(target_pct.get(key)))
+            s_val = html.escape(sim.fmt_percentile_value(similar_pct.get(key)))
+            rows.extend([
+                '<div class="cmp-row">',
+                f'<span class="cmp-cell-label">{label}</span>',
+                (
+                    f'<span><span class="cmp-value-wrap">'
+                    f'<span class="cmp-cell-value">{t_val}</span>{t_delta}</span></span>'
+                ),
+                (
+                    f'<span><span class="cmp-value-wrap">'
+                    f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span></span>'
+                ),
+                "</div>",
+            ])
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def _render_comparison_maps_row(
+    target: dict,
+    similar: dict,
+    target_passes,
+    similar_passes,
+    *,
+    target_carries=None,
+    similar_carries=None,
+    target_league: str,
+    similar_league: str,
+) -> None:
+    m1, m2 = st.columns(2, gap="small")
+    name_t = str(target.get("player_name", "—"))
+    name_s = str(similar.get("player_name", "—"))
+    with m1:
+        if (target_passes is not None and not target_passes.empty) or (
+            target_carries is not None and not target_carries.empty
+        ):
+            fig = draw_action_origin_heatmap(
+                target_passes,
+                target_carries,
+                name_t,
+                str(target.get("team", "—")),
+                cols=sim.ORIGIN_ANALYSIS_COLS,
+                rows=sim.ORIGIN_ANALYSIS_ROWS,
+                compare=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("No passes or carries.")
+    with m2:
+        if (similar_passes is not None and not similar_passes.empty) or (
+            similar_carries is not None and not similar_carries.empty
+        ):
+            fig = draw_action_origin_heatmap(
+                similar_passes,
+                similar_carries,
+                name_s,
+                str(similar.get("team", "—")),
+                cols=sim.ORIGIN_ANALYSIS_COLS,
+                rows=sim.ORIGIN_ANALYSIS_ROWS,
+                compare=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("No passes or carries.")
+
+
+def _fig_to_b64(fig) -> str:
+    import base64
+    import io
+
+    import matplotlib.pyplot as plt
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=fig.dpi, facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.04)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _fig_to_blurred_b64(fig, *, blur_radius: int = 7) -> str:
+    import base64
+    import io
+
+    import matplotlib.pyplot as plt
+    from PIL import Image, ImageFilter
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=fig.dpi, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    out = io.BytesIO()
+    blurred.save(out, format="PNG")
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+def _pres_blur_tile_html(b64: str, title: str, text: str) -> str:
+    return (
+        '<div class="pres-blur-tile">'
+        f'<img src="data:image/png;base64,{b64}" alt="">'
+        '<div class="pres-blur-overlay">'
+        '<div class="pres-blur-caption">'
+        f"<strong>{html.escape(title)}</strong>"
+        f"<p>{html.escape(text)}</p>"
+        "</div></div></div>"
+    )
+
+
+def _presentation_example_player(
+    all_players: list[dict],
+    passes_by_player: dict,
+) -> dict | None:
+    for player in all_players:
+        if str(player.get("player_name", "")).strip().lower() != "aderlan":
+            continue
+        pid = str(player["player_id"])
+        passes = passes_by_player.get(pid)
+        if passes is not None and not passes.empty:
+            return player
+    return next(
+        (
+            p for p in all_players
+            if passes_by_player.get(str(p["player_id"])) is not None
+            and not passes_by_player[str(p["player_id"])].empty
+        ),
+        None,
+    )
+
+
+def _render_presentation_blur_demo(player: dict, passes) -> None:
+    team_label = str(player.get("team", "—"))
+    name = str(player.get("player_name", "Player"))
+    map_specs = [
+        (
+            draw_all_completed_passes_map(passes, name, team_label, dashboard=True),
+            "Completed passes",
+            "All completed passes: origin and trajectory. Shows where the player moves the ball.",
+        ),
+        (
+            draw_pass_destination_heatmap(
+                passes, name, team_label, dashboard=True, impact_only=False,
+            ),
+            "Completed destinations",
+            "Heatmap of completed pass arrivals — zones where the team becomes dangerous.",
+        ),
+        (
+            draw_impact_pass_map(passes, name, team_label, dashboard=True),
+            f"{IMPACT_PASS_ABBR}",
+            f"Passes that meaningfully change xT. Colors highlight progression and high {IMPACT_PASS_ABBR}.",
+        ),
+        (
+            draw_pass_destination_heatmap(passes, name, team_label, dashboard=True),
+            f"{IMPACT_PASS_ABBR} destinations",
+            f"Where {IMPACT_PASS_ABBR} arrive — penetration lanes and decisive passing lines.",
+        ),
+    ]
+    tiles_html = "".join(
+        _pres_blur_tile_html(_fig_to_blurred_b64(fig), title, text)
+        for fig, title, text in map_specs
+    )
+    sidebar_back = _build_dashboard_sidebar_html(player)
+    demo_html = (
+        '<div class="pres-layout-demo">'
+        f'<div class="pres-grid-demo">{tiles_html}</div>'
+        '<div class="pres-blur-panel">'
+        f'<div class="pres-blur-back">{sidebar_back}</div>'
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
+        "<strong>Player cards</strong>"
+        "<p>On the right: overall rating, participation, and pillar scores. "
+        "Click each pillar arrow to expand detailed metrics.</p>"
+        "</div></div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+PRES_FEATURE_SPECS: tuple[tuple[str, str, str], ...] = (
+    (
+        "player_analysis",
+        "Player Analysis",
+        "Focused player profile with xP metrics and position ranks.",
+    ),
+    (
+        "maps",
+        "Maps",
+        f"Season map of xP {IMPACT_PASS_ABBR} with distance filters.",
+    ),
+)
+
+
+def _toggle_pres_demo(section: str) -> None:
+    current = st.session_state.get(PRES_DEMO_KEY)
+    st.session_state[PRES_DEMO_KEY] = None if current == section else section
+
+
+def _render_pres_feature_cards() -> None:
+    cols = st.columns(len(PRES_FEATURE_SPECS))
+    for col, (key, title, desc) in zip(cols, PRES_FEATURE_SPECS):
+        with col:
+            is_open = st.session_state.get(PRES_DEMO_KEY) == key
+            state_cls = " open" if is_open else ""
+            st.markdown(
+                f'<div class="pres-feature-card{state_cls}">'
+                f"<h4>{html.escape(title)}</h4>"
+                f"<p>{html.escape(desc)}</p></div>",
+                unsafe_allow_html=True,
+            )
+            arrow = "▼ Hide preview" if is_open else "▶ Show preview"
+            if st.button(arrow, key=f"pres_demo_btn_{key}", use_container_width=True):
+                _toggle_pres_demo(key)
+
+
+def _player_analysis_mock_inner_html() -> str:
+    table_rows = "".join(
+        f"<tr><td>{n}</td><td>SA Player {n}</td><td>Serie A</td><td>{90 - i * 4}%</td><td>{75 - i * 3}%</td></tr>"
+        for i, n in enumerate(range(1, 4), start=0)
+    )
+    return (
+        '<div class="pres-sim-mock">'
+        '<div class="pres-sim-mock-head">Player Analysis</div>'
+        '<div class="pres-sim-mock-field">Copa do Mundo player · rating profile</div>'
+        '<div class="pres-sim-mock-field" style="margin-top:0.45rem">Similar - Serie A · Comparison</div>'
+        '<table class="pres-sim-mock-table"><thead><tr>'
+        "<th>#</th><th>Player</th><th>League</th><th>Sim.</th><th>Origin</th>"
+        f"</tr></thead><tbody>{table_rows}</tbody></table>"
+        "</div>"
+    )
+
+
+def _render_presentation_player_analysis_demo() -> None:
+    demo_html = (
+        '<div class="pres-blur-panel pres-blur-panel-wide">'
+        f'<div class="pres-blur-back">{_player_analysis_mock_inner_html()}</div>'
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
+        "<strong>Player Analysis</strong>"
+        "<p>Explore any Copa do Mundo player with season xP metrics, pillar stats, "
+        "<strong>Similar - Série A</strong> and <strong>Comparison</strong>.</p>"
+        "<p style='margin-top:0.45rem'>Comparables are ranked by pass+carry metrics at the same position group. "
+        "Click a row to compare percentiles and origin profiles side by side.</p>"
+        "</div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+def _render_presentation_maps_demo() -> None:
+    demo_html = (
+        '<div class="pres-blur-panel pres-blur-panel-wide">'
+        '<div class="pres-blur-back">'
+        '<div class="pres-sim-mock-head">Maps</div>'
+        '<div class="pres-sim-mock-field">SofaScore-style origin heatmap</div>'
+        '<div class="pres-sim-mock-field">All actions · impact actions · heatmaps</div>'
+        "</div>"
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
+        "<strong>Maps</strong>"
+        "<p>Filter by position blocks, pick a player, and open the origin heatmap plus all progression maps.</p>"
+        "</div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+def _render_pres_flow_steps() -> None:
+    steps = [
+        (
+            "Player Analysis",
+            "Choose position, archetype and player to view the xP Profile, regular stats "
+            "and special passes, with positional rank.",
+        ),
+        (
+            "Scatter",
+            f"Compare players in a position on an X/Y chart using xP and {IMPACT_PASS_ABBR} metrics.",
+        ),
+        (
+            "Maps",
+            "Select a player and pass type to view them on the pitch, colored "
+            "by xP (gray → strong red).",
+        ),
+    ]
+    items = []
+    for idx, (title, text) in enumerate(steps, start=1):
+        items.append(
+            f'<div class="pres-flow-step">'
+            f'<div class="pres-flow-num">{idx}</div>'
+            f"<strong>{html.escape(title)}</strong>"
+            f'<span class="desc">{html.escape(text)}</span></div>'
+        )
+    st.markdown(
+        '<div class="pres-card"><h4 style="margin-bottom:0.75rem">How to use the dashboard</h4>'
+        f'<div class="pres-flow">{"".join(items)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_presentation_tab(
+    all_players: list[dict],
+    passes_by_player: dict,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+    *,
+    rated: list[dict],
+    xp_players: list[dict] | None = None,
+) -> None:
+    _ = (all_players, passes_by_player, players_by_id, pool_by_position, rated, xp_players)
+
+    xp_ref = (
+        '<a class="pres-xp-ref" href="#pres-xp-card" title="See the card beside: what is xP">'
+        'xP</a>'
+    )
+
+    st.markdown(
+        '<div class="pres-about-card">'
+        '<span class="pres-step-num">1</span>'
+        '<span class="pres-about-icon"><i class="fa-solid fa-user"></i></span>'
+        "<div class='pres-about-body'>"
+        f"<h4>{html.escape(TARGET_PLAYER_NAME)}</h4>"
+        "<p>Dashboard dedicado ao meio-campista croata, com passes da temporada em "
+        f"<code>season_all.csv</code> e comparação contra meio-campistas das principais ligas europeias "
+        "(Premier League, Serie A, La Liga, Bundesliga e Ligue 1) via "
+        f"{xp_ref}.</p>"
+        f"<p>O {xp_ref} é a base: perfil do jogador, rankings posicionais "
+        "e o impacto real de cada entrega.</p>"
+        "<p>Inclui <strong>Player Analysis</strong>, dados proprietários e mapas "
+        "para aprofundar o caso.</p>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="pres-card pres-card-hero pres-card-with-icon" id="pres-xp-card">'
+        '<span class="pres-step-num pres-step-num-accent">2</span>'
+        '<div class="pres-about-icons">'
+        '<span class="pres-about-icon"><i class="fa-solid fa-lightbulb"></i></span>'
+        '<span class="pres-about-icon pres-about-icon-ip" title="Impact Pass (I.P.)">'
+        '<i class="fa-solid fa-crosshairs"></i></span>'
+        '</div>'
+        "<div class='pres-about-body'>"
+        "<h4>xP (Expected Pass) — Explained</h4>"
+        "<ul class='pres-hero-list'>"
+        "<li>The <em>xP (Expected Pass)</em> assigns a value to every pass "
+        "made by a player.</li>"
+        "<li>Each pass is scored by how rare the <em>origin → destination</em> pair is — "
+        "i.e. how uncommon that zone combination is relative to more than "
+        "<em>900k</em> passes.</li>"
+        "<li>The model also adjusts for pass progression (moving up the pitch) and "
+        "destination accessibility (more or less obvious targets).</li>"
+        f"<li><strong>Impact Pass ({IMPACT_PASS_ABBR})</strong> — passes that combine "
+        "high surprise (top residual for distance) with strong xP value; the deliveries "
+        "that most change the game.</li>"
+        "</ul>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="pres-card pres-card-with-icon">'
+        '<span class="pres-step-num">3</span>'
+        '<span class="pres-about-icon"><i class="fa-solid fa-calculator"></i></span>'
+        "<div class='pres-about-body'>"
+        "<h4>How is xP calculated?</h4>"
+        "<ul class='pres-calc-list'>"
+        "<li><strong>Pitch grid</strong> — 12×8 origin and destination grids.</li>"
+        "<li><strong>Global reference</strong> — rarity measured in the 900k+ pass pool.</li>"
+        "<li><strong>Progression</strong> — forward movement increases value; backward and lateral passes reduce it.</li>"
+        "<li><strong>Accessibility</strong> — easy passes in the defensive third are discounted.</li>"
+        "</ul>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<p class="pres-section-label">The 2 Analysis Pillars</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="pres-cards-3">'
+        '<div class="pres-tile pres-dim">'
+        '<span class="pres-icon"><i class="fa-solid fa-chart-simple"></i></span>'
+        "<h5>Productivity <em>50%</em></h5>"
+        "<p>xP generated per game — how much total value the player delivers through their passes.</p></div>"
+        '<div class="pres-tile pres-dim">'
+        '<span class="pres-icon"><i class="fa-solid fa-bolt"></i></span>'
+        "<h5>Effectiveness <em>50%</em></h5>"
+        "<p>xP per pass — how much value each delivery carries, regardless of volume.</p></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<p class="pres-section-label">How to navigate</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="pres-cards-row">'
+        '<div class="pres-tile">'
+        '<span class="pres-icon"><i class="fa-solid fa-sliders"></i></span>'
+        f"<h5>Perfil fixo</h5><p>A análise está focada em <strong>{html.escape(TARGET_PLAYER_NAME)}</strong>. "
+        "Os rankings e scatter comparam o jogador com o pool europeu de meio-campistas.</p></div>"
+        '<div class="pres-tile">'
+        '<span class="pres-icon"><i class="fa-solid fa-user"></i></span>'
+        "<h5>Player Analysis</h5><p>Perfil completo com estatísticas e ranking posicional.</p></div>"
+        '<div class="pres-tile">'
+        '<span class="pres-icon"><i class="fa-solid fa-braille"></i></span>'
+        "<h5>Scatter &amp; Maps on demand</h5><p>From the selected player, open X/Y scatter charts "
+        "and pass maps colored by xP — only when you ask for them.</p></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_similarity_player_panel(
+    player: dict,
+    passes,
+    *,
+    carries=None,
+    league: str,
+    similarity_pct: float | None = None,
+    comparison_mode: bool = False,
+) -> None:
+    header = (
+        f"**{html.escape(str(player.get('player_name', '—')))}** · "
+        f"{html.escape(str(player.get('team', '—')))} · "
+        f"{html.escape(str(player.get('position', '—')))}"
+    )
+    if similarity_pct is not None:
+        header += f" · sim. **{similarity_pct:.1f}%**"
+    st.markdown(header, unsafe_allow_html=True)
+
+    if not comparison_mode:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
+        m2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
+        m3.metric(f"{IMPACT_PASS_ABBR} p90", fmt_stat_value("impact_passes_p90", player.get("impact_passes_p90")))
+        m4.metric(
+            f"Impact Carries p90",
+            fmt_stat_value("carry_impact_passes_p90", player.get("carry_impact_passes_p90")),
+        )
+    else:
+        g1, g2, g3 = st.columns(3)
+        g1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
+        g2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
+        g3.metric("Carries", fmt_stat_value("carries_total", player.get("carries_total")))
+
+    profile = sim.action_origin_profile(passes, carries)
+    if profile is not None and not comparison_mode:
+        st.caption(f"Dominant origin: {sim.describe_dominant_origin_zone(profile)}")
+
+    has_actions = (
+        (passes is not None and not passes.empty)
+        or (carries is not None and not carries.empty)
+    )
+    if not comparison_mode and has_actions:
+        fig = draw_action_origin_heatmap(
+            passes,
+            carries,
+            str(player.get("player_name", "—")),
+            str(player.get("team", "—")),
+            cols=sim.ORIGIN_GRID_COLS,
+            rows=sim.ORIGIN_GRID_ROWS,
+            compare=comparison_mode,
+            tiny=not comparison_mode,
+        )
+        st.pyplot(fig, clear_figure=True, use_container_width=comparison_mode)
+    elif not comparison_mode:
+        st.caption("No passes or carries for origin heatmap.")
+
+
+def _sync_similar_row_selection(pick_key: str) -> None:
+    qp = st.query_params.get("similar_idx")
+    if qp is not None and str(qp).isdigit():
+        st.session_state[pick_key] = int(qp)
+
+
+def _similarity_meter_html(pct: float | None, *, tone: str = "metrics") -> str:
+    if pct is None:
+        return '<span class="sim-empty">—</span>'
+    value = max(0.0, min(100.0, float(pct)))
+    tone_cls = ""
+    if tone == "origin":
+        tone_cls = " origin"
+    elif tone == "traditional":
+        tone_cls = " traditional"
+    return (
+        f'<span class="sim-meter-wrap{tone_cls}">'
+        f'<span class="sim-meter"><span class="sim-meter-fill" style="width:{value:.0f}%"></span></span>'
+        f'<span class="sim-pct">{value:.0f}%</span>'
+        "</span>"
+    )
+
+
+_SIMILARITY_TABLE_EMBED_CSS = """
+.pa-sim-table{width:100%;border-collapse:separate;border-spacing:0;font-size:0.86rem;
+  border:1px solid #2a3550;border-radius:12px;overflow:hidden;background:#111827}
+.pa-sim-table th,.pa-sim-table td{padding:10px 12px;text-align:left;vertical-align:middle}
+.pa-sim-table th{background:linear-gradient(180deg,#1b2438,#141b2d);color:#8fa3bf;font-weight:600;
+  font-size:0.68rem;letter-spacing:0.06em;text-transform:uppercase;border-bottom:1px solid #2f3b56}
+.pa-sim-table td{border-bottom:1px solid #232d42;color:#e2e8f0}
+.pa-sim-table tr.row{cursor:pointer;transition:background .15s ease}
+.pa-sim-table tr.row:hover td{background:#1a2238}
+.pa-sim-table tr.row.sel td{background:#1c3354}
+.pa-sim-table tr.row.sel td:first-child{box-shadow:inset 3px 0 0 #60a5fa}
+.pa-sim-table tr:last-child td{border-bottom:none}
+.pa-sim-table .rank{color:#64748b;font-weight:700;width:2.2rem}
+.pa-sim-table .team{color:#94a3b8;font-size:0.82rem}
+.pa-sim-table .sim-col,.pa-sim-table .traditional-col,.pa-sim-table .origin-col{min-width:6.8rem}
+.sim-meter-wrap{display:inline-flex;align-items:center;gap:0.45rem;min-width:6.2rem}
+.sim-meter{position:relative;width:4.5rem;height:0.42rem;border-radius:999px;background:#1e293b;overflow:hidden}
+.sim-meter-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2563eb,#38bdf8)}
+.sim-meter-wrap.traditional .sim-meter-fill{background:linear-gradient(90deg,#7c3aed,#c084fc)}
+.sim-meter-wrap.origin .sim-meter-fill{background:linear-gradient(90deg,#0f766e,#34d399)}
+.sim-pct{font-size:0.8rem;font-weight:700;color:#f8fafc;min-width:2.2rem}
+.sim-empty{color:#64748b}
+"""
+
+
+def _similarity_results_table_html(
+    results: list[dict],
+    *,
+    selected_idx: int | None,
+    origin_column: bool = True,
+    traditional_column: bool = False,
+) -> str:
+    body = []
+    for idx, row in enumerate(results):
+        sel = " sel" if selected_idx is not None and idx == selected_idx else ""
+        traditional_cell = (
+            f'<td class="traditional-col">{_similarity_meter_html(row.get("traditional_similarity_pct"), tone="traditional")}</td>'
+            if traditional_column
+            else ""
+        )
+        origin_val = row.get("origin_similarity_pct")
+        origin_cell = (
+            f'<td class="origin-col">{_similarity_meter_html(origin_val, tone="origin")}</td>'
+            if origin_column
+            else ""
+        )
+        body.append(
+            f'<tr class="row{sel}" onclick="pickSimilar({idx})">'
+            f'<td class="rank">{idx + 1}</td>'
+            f"<td>{html.escape(str(row.get('player_name', '—')))}</td>"
+            f'<td class="team">{html.escape(str(row.get("team", "—")))}</td>'
+            f'<td class="sim-col">{_similarity_meter_html(row.get("similarity_pct"))}</td>'
+            f"{traditional_cell}"
+            f"{origin_cell}"
+            "</tr>"
+        )
+    traditional_head = "<th>Stats p90</th>" if traditional_column else ""
+    origin_head = "<th>Origin</th>" if origin_column else ""
+    return (
+        '<table class="pa-sim-table"><thead><tr>'
+        "<th>#</th><th>Player</th><th>Team</th><th>xStats</th>"
+        f"{traditional_head}"
+        f"{origin_head}"
+        "</tr></thead><tbody>"
+        f"{''.join(body)}</tbody></table>"
+    )
+
+
+def _render_similarity_results_html_table(
+    results: list[dict],
+    *,
+    pick_key: str,
+    origin_column: bool = True,
+    traditional_column: bool = False,
+) -> int | None:
+    _sync_similar_row_selection(pick_key)
+    selected_idx = st.session_state.get(pick_key)
+    if selected_idx is not None:
+        try:
+            selected_idx = int(selected_idx)
+        except (TypeError, ValueError):
+            selected_idx = None
+    if selected_idx is not None and (selected_idx < 0 or selected_idx >= len(results)):
+        selected_idx = None
+
+    table_html = _similarity_results_table_html(
+        results,
+        selected_idx=selected_idx,
+        origin_column=origin_column,
+        traditional_column=traditional_column,
+    )
+    row_height = 44
+    height = 56 + row_height * max(len(results), 1)
+    page = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#e8edf5;background:transparent}}
+{_SIMILARITY_TABLE_EMBED_CSS}
+</style>
+<script>
+function pickSimilar(idx) {{
+  try {{
+    const base = window.parent !== window ? window.parent : window;
+    const url = new URL(base.location.href);
+    url.searchParams.set("pa_similar", "1");
+    url.searchParams.set("similar_idx", String(idx));
+    base.location.href = url.toString();
+  }} catch (e) {{
+    const url = new URL(window.location.href);
+    url.searchParams.set("pa_similar", "1");
+    url.searchParams.set("similar_idx", String(idx));
+    window.location.href = url.toString();
+  }}
+}}
+</script></head><body>
+<div class="pa-similar-card">{table_html}</div>
+</body></html>"""
+    components.html(page, height=height, scrolling=False)
+    return selected_idx
+
+
+def _similarity_results_df(
+    results: list[dict],
+    *,
+    include_origin: bool = False,
+    origin_dual: bool = False,
+    origin_column: bool = False,
+):
+    import pandas as pd
+
+    rows = []
+    for rank, row in enumerate(results, start=1):
+        entry = {
+            "#": rank,
+            "Player": row.get("player_name", "—"),
+            "Team": row.get("team", "—"),
+            "Sim.": f"{row.get('similarity_pct', 0):.0f}%",
+            "_player_id": str(row.get("player_id", "")),
+        }
+        if origin_dual:
+            entry["Sim. metrics"] = f"{row.get('similarity_pct', 0):.1f}%"
+            entry["Sim. origin"] = f"{row.get('origin_similarity_pct', 0):.1f}%"
+            entry["Dominant origin"] = row.get("origin_dominant", "—")
+        elif include_origin:
+            entry["Similarity"] = f"{row.get('similarity_pct', 0):.1f}%"
+            entry["Dominant origin"] = row.get("origin_dominant", "—")
+        elif origin_column:
+            origin_val = row.get("origin_similarity_pct")
+            entry["Origin"] = (
+                f"{float(origin_val):.0f}%" if origin_val is not None else "—"
+            )
+        else:
+            entry["Similarity"] = f"{row.get('similarity_pct', 0):.1f}%"
+        rows.append(entry)
+    return pd.DataFrame(rows)
+
+
+def _render_similarity_results_tab(
+    *,
+    results: list[dict],
+    target: dict,
+    target_passes,
+    pool_passes: dict,
+    target_carries=None,
+    pool_carries: dict | None = None,
+    target_league: str,
+    similar_league: str,
+    target_pool_by_pos: dict[str, list[dict]],
+    similar_pool_by_pos: dict[str, list[dict]],
+    pick_key: str,
+    include_origin: bool = False,
+    origin_dual: bool = False,
+    origin_column: bool = False,
+    traditional_column: bool = False,
+    html_table: bool = False,
+) -> None:
+    import pandas as pd
+
+    if not results:
+        st.info("No similar players found.")
+        return
+
+    selected_rows: list[int] = []
+    if html_table:
+        selected_idx = _render_similarity_results_html_table(
+            results,
+            pick_key=pick_key,
+            origin_column=origin_column,
+            traditional_column=traditional_column,
+        )
+        if selected_idx is None:
+            st.caption("Click a row to compare with the selected player.")
+            return
+        selected_rows = [selected_idx]
+    else:
+        df = _similarity_results_df(
+            results,
+            include_origin=include_origin,
+            origin_dual=origin_dual,
+            origin_column=origin_column,
+        )
+        display_df = df.drop(columns=["_player_id"])
+        pick = st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=pick_key,
+        )
+
+        if pick is not None:
+            selection = getattr(pick, "selection", None)
+            if selection is not None:
+                selected_rows = list(getattr(selection, "rows", []) or [])
+            elif isinstance(pick, dict):
+                selected_rows = list(pick.get("selection", {}).get("rows", []) or [])
+        if not selected_rows and pick_key in st.session_state:
+            state = st.session_state.get(pick_key)
+            if isinstance(state, dict):
+                selected_rows = list(state.get("selection", {}).get("rows", []) or [])
+
+        if not selected_rows:
+            st.caption("Click a table row to compare with the selected player.")
+            return
+
+    similar = dict(results[int(selected_rows[0])])
+    similar_id = str(similar.get("player_id", ""))
+    similar_passes = pool_passes.get(similar_id)
+    similar_carries = (pool_carries or {}).get(similar_id)
+    target_carries_data = target_carries
+
+    compare_keys = sim.SIMILARITY_METRICS_A
+    target_pct = sim.position_pool_percentiles(target, target_pool_by_pos, keys=compare_keys)
+    similar_pct = sim.position_pool_percentiles(similar, similar_pool_by_pos, keys=compare_keys)
+    target_pos = sim.player_search_position(target) or "—"
+
+    st.markdown("#### Comparison")
+    st.caption(
+        f"Percentiles in the {html.escape(sim.similarity_position_label(target_pos))} pool · "
+        f"▲ green = above · ▼ red = below "
+        f"({html.escape(target_league)} vs {html.escape(similar_league)})."
+    )
+
+    _render_comparison_maps_row(
+        target,
+        similar,
+        target_passes,
+        similar_passes,
+        target_carries=target_carries_data,
+        similar_carries=similar_carries,
+        target_league=target_league,
+        similar_league=similar_league,
+    )
+
+    col_target, col_similar = st.columns(2, gap="small")
+    with col_target:
+        st.markdown(f"**Reference · {html.escape(target_league)}**", unsafe_allow_html=True)
+        _render_similarity_player_panel(
+            target,
+            target_passes,
+            carries=target_carries_data,
+            league=target_league,
+            comparison_mode=True,
+        )
+    with col_similar:
+        st.markdown(f"**Similar · {html.escape(similar_league)}**", unsafe_allow_html=True)
+        _render_similarity_player_panel(
+            similar,
+            similar_passes,
+            carries=similar_carries,
+            league=similar_league,
+            similarity_pct=float(similar.get("similarity_pct") or 0),
+            comparison_mode=True,
+        )
+        if similar.get("traditional_similarity_pct") is not None:
+            st.caption(
+                f"Stats p90 similarity: {float(similar['traditional_similarity_pct']):.1f}%"
+            )
+        if similar.get("origin_similarity_pct") is not None:
+            st.caption(
+                f"Origin similarity — passes + carries ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS}): "
+                f"{float(similar['origin_similarity_pct']):.1f}%"
+            )
+
+    st.markdown(
+        _comparison_metrics_html(
+            target,
+            similar,
+            target_league=target_league,
+            similar_league=similar_league,
+            target_pct=target_pct,
+            similar_pct=similar_pct,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def main() -> None:
+    tab_pres, tab_analysis, tab_xp_maps = st.tabs(
+        ["Overview", "Player Analysis", "xP - Maps Analysis"]
+    )
+    with tab_pres:
+        render_presentation_tab([], {}, {}, {}, rated=[], xp_players=[])
+    with tab_analysis:
+        (
+            pa_players,
+            pa_passes_by_player,
+            pa_progression_by_id,
+            pa_players_by_id,
+            pa_carries_by_id,
+            pa_progression_pool_by_position,
+            pa_pool_by_position,
+            pa_carries_pool_by_position,
+            pa_xp_by_id,
+        ) = _player_analysis_bundle()
+        render_player_analysis_section(
+            pa_players,
+            pa_passes_by_player,
+            pa_progression_by_id,
+            pa_players_by_id,
+            pa_carries_by_id,
+            pa_progression_pool_by_position,
+            pa_pool_by_position,
+            pa_carries_pool_by_position,
+            xp_by_id=pa_xp_by_id,
+        )
+    with tab_xp_maps:
+        render_xp_maps_analysis_tab()
+
+
+main()

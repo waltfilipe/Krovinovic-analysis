@@ -1,0 +1,10 @@
+{
+  "version": "m4_od_12x8_b4_a2_pr0_global_ita_laliga_dist30_access_ridge_v7",
+  "passes": 99781,
+  "completed": 83420,
+  "threats": 5624,
+  "players": 1023,
+  "matches": 104,
+  "impact_pass_rule_version": "composite_v2_p925_prog65",
+  "impact_pass_rule": "composite score (45% destination xP + 35% residual + 20% progress) \u2265 P92.5 per distance band and progress_ratio \u2265 P65 per band"
+}

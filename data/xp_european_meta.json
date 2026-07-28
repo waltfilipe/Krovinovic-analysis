@@ -1,0 +1,12 @@
+{
+  "version": "m4_od_12x8_b4_a2_pr0_global_ita_laliga_ligue1_blend65_35_dist30_access_ridge_v8",
+  "impact_pass_rule_version": "composite_v2_p925_prog65",
+  "impact_pass_rule": "composite score (45% destination xP + 35% residual + 20% progress) \u2265 P92.5 per distance band and progress_ratio \u2265 P65 per band",
+  "reference_global_weight": 0.65,
+  "reference_league_weight": 0.35,
+  "passes": 445226,
+  "completed": 373404,
+  "threats": 26077,
+  "players": 665,
+  "matches": 1754
+}
