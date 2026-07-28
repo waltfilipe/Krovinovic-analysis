@@ -1340,7 +1340,7 @@ XP_REGULAR_STAT_RANK_KEYS: tuple[str, ...] = (
 
 def _zscore(series: pd.Series) -> pd.Series:
     std = float(series.std())
-    if std <= 1e-12:
+    if not np.isfinite(std) or std <= 1e-12:
         return pd.Series(0.0, index=series.index)
     return (series - series.mean()) / std
 
@@ -1423,8 +1423,12 @@ def _attach_index_display_scores(
     pool_size = len(rows)
     ranks = _rank_descending(composite)
     for i, row in enumerate(rows):
-        row[raw_key] = float(composite.iloc[i])
-        rank = int(ranks.iloc[i])
+        comp = float(composite.iloc[i])
+        if not np.isfinite(comp):
+            comp = 0.0
+        row[raw_key] = comp
+        rank_raw = float(ranks.iloc[i])
+        rank = int(rank_raw) if np.isfinite(rank_raw) else pool_size
         row[f"{raw_key}_rank_in_group"] = rank
         row[f"{raw_key}_rank_pool_in_group"] = pool_size
         row[display_key] = float(pe.rank_to_display_score(rank, pool_size))
