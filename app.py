@@ -7871,7 +7871,7 @@ def _pa_pass_length_card_html(xp_profile: dict | None) -> str:
         pctile_txt = f" · P{float(pctile):.0f}" if pctile is not None else ""
         foot = (
             '<p class="pa-pass-mix-foot">'
-            f"Center = midfielder avg ({peer_avg:.1f}% long, {peer_count} players)"
+            f"Center = Croatian avg ({peer_avg:.1f}% long, {peer_count} midfielders)"
             f"{html.escape(pctile_txt)}"
             "</p>"
         )
@@ -8137,7 +8137,6 @@ XP_PA_REGULAR_STAT_KEYS: tuple[str, ...] = (
     "passes_total",
     "pass_completion_pct",
     "long_balls",
-    "long_pass_share_pct",
     "long_ball_completion_pct",
     "progressive_passes",
     "final_third_passes",
@@ -8151,7 +8150,6 @@ XP_PA_REGULAR_STAT_LABELS: dict[str, str] = {
     "passes_total": "Passes / game",
     "pass_completion_pct": "% Passes certos",
     "long_balls": "Long passes / game",
-    "long_pass_share_pct": "% Long passes",
     "long_ball_completion_pct": "% Completed long passes",
     "progressive_passes": "Progressive passes / game",
     "final_third_passes": "Passes into final third / game",
@@ -8165,7 +8163,6 @@ XP_PA_REGULAR_STAT_TOOLTIPS: dict[str, str] = {
     "passes_total": "Passes attempted per 90 minutes.",
     "pass_completion_pct": "Completed pass percentage.",
     "long_balls": "Long passes (≥30 m) per 90 minutes.",
-    "long_pass_share_pct": "Share of completed passes that are long (distance band >30 m).",
     "long_ball_completion_pct": "Completed long-pass percentage.",
     "progressive_passes": (
         "Progressive passes completed per game (p90) — Wyscout criterion: "
@@ -8191,7 +8188,6 @@ XP_PA_REGULAR_STAT_KIND: dict[str, str] = {
     "passes_total": "p90",
     "pass_completion_pct": "pct",
     "long_balls": "p90",
-    "long_pass_share_pct": "pct",
     "long_ball_completion_pct": "pct",
     "progressive_passes": "p90",
     "final_third_passes": "p90",
@@ -8222,12 +8218,15 @@ def _pa_regular_stat_value(source: dict, key: str) -> str:
     return _pa_simple_stat_value(source.get(key), XP_PA_REGULAR_STAT_KIND.get(key, "p90"))
 
 
-PA_MEDAL_GOLD_TOP = 10
-PA_MEDAL_SILVER_TOP = 20
-PA_MEDAL_BRONZE_TOP = 30
+PA_MEDAL_GOLD_TOP = 5
+PA_MEDAL_SILVER_TOP = 10
+PA_MEDAL_BRONZE_TOP = 15
 
 
 def _pa_field_group_label(source: dict) -> str:
+    pool_size = source.get("croatian_rank_pool_size")
+    if pool_size:
+        return f"Croatian League ({int(pool_size)} midfielders)"
     profile = str(source.get("midfield_origin_profile") or "")
     if profile == "campo_ofensivo":
         return "Campo ofensivo"
@@ -8247,17 +8246,17 @@ def _pa_top_badge_html(rank_info: dict | None) -> str:
         return ""
     if rank <= PA_MEDAL_GOLD_TOP:
         return (
-            '<span class="pa-top-badge pa-top-badge-gold" title="Top 10" aria-label="Top 10">'
+            '<span class="pa-top-badge pa-top-badge-gold" title="Top 5" aria-label="Top 5">'
             '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
         )
     if rank <= PA_MEDAL_SILVER_TOP:
         return (
-            '<span class="pa-top-badge pa-top-badge-silver" title="Top 20" aria-label="Top 20">'
+            '<span class="pa-top-badge pa-top-badge-silver" title="Top 10" aria-label="Top 10">'
             '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
         )
     if rank <= PA_MEDAL_BRONZE_TOP:
         return (
-            '<span class="pa-top-badge pa-top-badge-bronze" title="Top 30" aria-label="Top 30">'
+            '<span class="pa-top-badge pa-top-badge-bronze" title="Top 15" aria-label="Top 15">'
             '<i class="fa-solid fa-medal" aria-hidden="true"></i></span>'
         )
     return ""

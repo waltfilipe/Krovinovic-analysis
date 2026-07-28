@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import math
 
+import numpy as np
 import pandas as pd
 
 import midfield_origin as mo
@@ -15,6 +16,9 @@ import xp_engine as xe
 import xp_stats_engine as xstats
 
 from krovinovic_config import (
+    CROATIAN_MIN_MINUTES_PCT,
+    CROATIAN_PASS_PERCENTILE,
+    CROATIAN_RANK_POOL_LABEL,
     TARGET_LEAGUE_LABEL,
     TARGET_LEAGUE_SOURCE,
     TARGET_PLAYER_ID,
@@ -23,6 +27,29 @@ from krovinovic_config import (
 
 compute_pass_ratings = pe.compute_pass_ratings
 pg_compute_progression_ratings = pge.compute_progression_ratings
+
+CROATIAN_RANK_METRICS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        key
+        for key in (
+            *(
+                metric
+                for metric in xstats.XP_REGULAR_STAT_RANK_KEYS
+                if metric != "long_pass_share_pct"
+            ),
+            *xstats.XP_PLAYER_ANALYSIS_RANK_METRICS,
+            *xe.XP_POSITION_RANK_METRICS,
+            "xp_per_90",
+            "xp_m4_per_pass",
+            "impact_passes_p90",
+            "special_line_break_p90",
+            "progressive_passes",
+            "final_third_passes",
+            "key_passes",
+            "long_balls",
+        )
+    )
+)
 
 
 def _load_target_pass_frame() -> pd.DataFrame:
@@ -129,6 +156,141 @@ def build_target_xp_profile(xp_passes: pd.DataFrame) -> dict | None:
         "passes_completed": int((xp_passes["is_won"] & xp_passes["has_end"]).sum()),
         **metrics,
     }
+
+
+def _load_croatian_midfield_pass_frame() -> pd.DataFrame:
+    frame = pe._load_season_pass_frame()
+    if frame.empty:
+        return frame
+    work = pe._filter_pass_frame_to_midfielders(frame).copy()
+    if work.empty:
+        return work
+    work["league_source"] = TARGET_LEAGUE_SOURCE
+    return work
+
+
+def _build_xp_profile_from_group(
+    pid: str,
+    grp: pd.DataFrame,
+    *,
+    registry_by_id: dict[str, dict],
+    minutes_info: dict[str, dict],
+    raw_pass_frame: pd.DataFrame,
+) -> dict | None:
+    player_meta = registry_by_id.get(str(pid))
+    if player_meta is None:
+        return None
+
+    metrics = xstats.compute_extended_xp_stats(grp)
+    if not metrics:
+        return None
+
+    mins = minutes_info.get(str(pid), {})
+    minutes = mins.get("minutes")
+    player_raw = raw_pass_frame[raw_pass_frame["player_id"].astype(str) == str(pid)]
+    xstats.attach_regular_pass_stats(metrics, player_raw, minutes)
+    xstats.apply_per90_metrics(metrics, minutes)
+
+    position = player_meta.get("position", "CM")
+    return _sanitize_numeric_profile({
+        "player_id": str(pid),
+        "player_name": player_meta.get("name", "—"),
+        "position": position,
+        "position_group": pe.rating_position_group(position),
+        "team": mins.get("team", "—"),
+        "minutes": mins.get("minutes"),
+        "minutes_pct": mins.get("minutes_pct"),
+        "league": TARGET_LEAGUE_LABEL,
+        "league_source": TARGET_LEAGUE_SOURCE,
+        "passes_completed": int((grp["is_won"] & grp["has_end"]).sum()),
+        **metrics,
+    })
+
+
+@functools.lru_cache(maxsize=2)
+def build_croatian_midfield_xp_profiles() -> tuple[tuple[dict, ...], float]:
+    """xP profiles for all Croatian-league midfielders in season_all.csv."""
+    frame = _load_croatian_midfield_pass_frame()
+    if frame.empty:
+        return (), 0.0
+
+    minutes_info = pe._minutes_from_passes_frame(frame)
+    registry = pe.build_player_registry(frame)
+    registry_by_id = {str(player["code"]): player for player in registry}
+    xp_passes = xe._build_season_passes_from_frame(frame, blend_league_reference=False)
+    if xp_passes.empty:
+        return (), 0.0
+
+    profiles: list[dict] = []
+    for pid, grp in xp_passes.groupby("player_id", sort=False):
+        profile = _build_xp_profile_from_group(
+            str(pid),
+            grp,
+            registry_by_id=registry_by_id,
+            minutes_info=minutes_info,
+            raw_pass_frame=frame,
+        )
+        if profile is not None:
+            profiles.append(profile)
+
+    pass_counts = [float(profile.get("passes_completed") or 0.0) for profile in profiles]
+    p25_threshold = (
+        float(np.percentile(pass_counts, CROATIAN_PASS_PERCENTILE))
+        if pass_counts
+        else 0.0
+    )
+    return tuple(profiles), p25_threshold
+
+
+def _croatian_eligible_pool(profiles: tuple[dict, ...], p25_threshold: float) -> list[dict]:
+    eligible: list[dict] = []
+    for profile in profiles:
+        minutes_pct = profile.get("minutes_pct")
+        if minutes_pct is None or float(minutes_pct) < CROATIAN_MIN_MINUTES_PCT:
+            continue
+        if float(profile.get("passes_completed") or 0.0) <= p25_threshold:
+            continue
+        eligible.append(profile)
+    return eligible
+
+
+def _rank_target_in_pool(target_profile: dict, pool: list[dict], metrics: tuple[str, ...]) -> None:
+    pool_size = len(pool)
+    target_profile["croatian_rank_pool_size"] = pool_size
+    target_profile["croatian_rank_pool_label"] = CROATIAN_RANK_POOL_LABEL
+    if pool_size <= 0:
+        return
+
+    target_id = str(target_profile.get("player_id"))
+    for metric in metrics:
+        ranked = sorted(
+            pool,
+            key=lambda row: float(row.get(metric) or 0.0),
+            reverse=True,
+        )
+        for rank, row in enumerate(ranked, start=1):
+            if str(row.get("player_id")) != target_id:
+                continue
+            target_profile[f"{metric}_rank_in_group"] = rank
+            target_profile[f"{metric}_rank_pool_in_group"] = pool_size
+            break
+
+
+def attach_croatian_stat_ranks(target_profile: dict) -> None:
+    """Rank Krovinović against Croatian-league midfielders (≥25% minutes, >P25 passes)."""
+    profiles, p25_threshold = build_croatian_midfield_xp_profiles()
+    pool = _croatian_eligible_pool(profiles, p25_threshold)
+    if not pool:
+        return
+
+    target_id = str(target_profile.get("player_id"))
+    if not any(str(row.get("player_id")) == target_id for row in pool):
+        pool = [*pool, target_profile]
+
+    for row in pool:
+        row["midfield_origin_profile"] = "croatian_league"
+    xstats.attach_pass_length_profile(pool)
+    _rank_target_in_pool(target_profile, pool, CROATIAN_RANK_METRICS)
 
 
 def _sanitize_numeric_profile(profile: dict) -> dict:
@@ -242,6 +404,9 @@ def inject_target_into_bundle(
         if origin:
             _copy_origin_fields(xp_profile, origin)
     xe.refresh_xp_midfield_origin_rankings(list(xp_by_id.values()))
+    target_xp = xp_by_id.get(TARGET_PLAYER_ID)
+    if target_xp:
+        attach_croatian_stat_ranks(target_xp)
 
     for prof in progression_by_id.values():
         pid = str(prof.get("player_id"))
